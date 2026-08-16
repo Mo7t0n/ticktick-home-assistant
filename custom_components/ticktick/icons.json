@@ -12,6 +12,9 @@
         "delete_task": {
             "service": "mdi:delete"
         },
+        "complete_subtask": {
+            "service": "mdi:checkbox-marked-outline"
+        },
         "get_projects": {
             "service": "mdi:list-box"
         }

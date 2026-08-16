@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import datetime
 import logging
+from pathlib import Path
 
-from homeassistant.components.http import async_import_module
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig, async_import_module
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers import aiohttp_client
 
 from . import api
-from .const import DOMAIN
+from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MINUTES, DOMAIN
 from .coordinator import TickTickCoordinator
 from .service_handlers import (
+    handle_complete_subtask,
     handle_complete_task,
     handle_create_task,
     handle_delete_task,
@@ -28,9 +31,10 @@ type TickTickConfigEntry = ConfigEntry[api.AsyncConfigEntryAuth]
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = datetime.timedelta(minutes=1)
+PLATFORMS = [Platform.TODO, Platform.SENSOR]
 
-PLATFORMS = [Platform.TODO]
+CARD_URL_PATH = "/ticktick_files"
+CARD_JS_URL = f"{CARD_URL_PATH}/ticktick-list-card.js"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TickTickConfigEntry) -> bool:
@@ -56,9 +60,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: TickTickConfigEntry) -> 
     tickTickApiClient = TickTickAPIClient(access_token, aiohttp_session)
 
     await register_coordiantor(hass, tickTickApiClient, entry, access_token)
+    _LOGGER.debug("TickTick: coordinator registered")
     await register_services(hass, tickTickApiClient)
+    _LOGGER.debug("TickTick: services registered")
+    await register_frontend_card(hass)
+    _LOGGER.debug("TickTick: frontend card registered")
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.debug("TickTick: platforms forwarded: %s", PLATFORMS)
 
     return True
 
@@ -71,6 +80,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: TickTickConfigEntry) ->
     return unload_ok
 
 
+async def register_frontend_card(hass: HomeAssistant) -> None:
+    """Register the bundled TickTick Lovelace card as a frontend resource."""
+    if hass.data.get(DOMAIN, {}).get("frontend_registered"):
+        return
+
+    www_path = Path(__file__).parent / "www"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
+    )
+    add_extra_js_url(hass, CARD_JS_URL)
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN]["frontend_registered"] = True
+
+
 async def register_coordiantor(
     hass: HomeAssistant,
     tickTickApiClient: TickTickAPIClient,
@@ -78,8 +102,12 @@ async def register_coordiantor(
     access_token: str,
 ) -> None:
     """Register Coordinator for TickTick Todo Entity."""
+    scan_interval_minutes = entry.options.get(
+        CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MINUTES
+    )
+    scan_interval = datetime.timedelta(minutes=scan_interval_minutes)
     coordinator = TickTickCoordinator(
-        hass, _LOGGER, entry, SCAN_INTERVAL, tickTickApiClient, access_token
+        hass, _LOGGER, entry, scan_interval, tickTickApiClient, access_token
     )
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})
@@ -113,6 +141,12 @@ async def register_services(
         DOMAIN,
         "delete_task",
         await handle_delete_task(tickTickApiClient),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "complete_subtask",
+        await handle_complete_subtask(tickTickApiClient),
         supports_response=SupportsResponse.OPTIONAL,
     )
 

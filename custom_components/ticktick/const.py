@@ -2,6 +2,10 @@
 
 DOMAIN = "ticktick"
 
+# === Options === #
+CONF_SCAN_INTERVAL = "scan_interval"
+DEFAULT_SCAN_INTERVAL_MINUTES = 1
+
 OAUTH2_AUTHORIZE = "https://ticktick.com/oauth/authorize"
 OAUTH2_TOKEN = "https://ticktick.com/oauth/token"
 TICKTICK_HOST = "api.ticktick.com"
@@ -11,6 +15,7 @@ BASE_API_URL = f"{TICKTICK_HOST}/{API}"
 # === Parameters === #
 PROJECT_ID = "projectId"
 TASK_ID = "taskId"
+ITEM_ID = "itemId"
 
 # === Endpoints === #
 

@@ -15,6 +15,14 @@ class TaskPriority(Enum):
     HIGH = 5
 
 
+class TaskKind(Enum):
+    """Enum for a Task kind."""
+
+    TEXT = "TEXT"
+    NOTE = "NOTE"
+    CHECKLIST = "CHECKLIST"
+
+
 class Task(CheckListItem):
     """Task Class for TickTick.
 
@@ -44,6 +52,8 @@ class Task(CheckListItem):
         repeatFlag: str | None = None,  # Example "RRULE:FREQ=DAILY;INTERVAL=1"
         status: TaskStatus | None = None,
         items: list[CheckListItem] | None = None,
+        tags: list[str] | None = None,
+        kind: TaskKind | None = None,
     ) -> None:
         """Intialize a Task object."""
         CheckListItem.__init__(
@@ -65,6 +75,8 @@ class Task(CheckListItem):
         self.priority = priority
         self.reminders = reminders if reminders else []
         self.repeatFlag = repeatFlag
+        self.tags = tags if tags else []
+        self.kind = kind
 
     def toJSON(self):
         """Serialize Task to json."""
@@ -143,4 +155,6 @@ class Task(CheckListItem):
             items=[CheckListItem.from_dict(item) for item in data.get("items", [])]
             if data.get("items")
             else [],
+            tags=data.get("tags", []),
+            kind=TaskKind(data["kind"]) if data.get("kind") else None,
         )

@@ -11,7 +11,7 @@ from custom_components.ticktick.const import (
     UPDATE_TASK,
 )
 
-from .models.project import Kind, Project
+from .models.project import Project
 from .models.project_with_tasks import ProjectWithTasks
 from .models.task import Task
 
@@ -53,13 +53,17 @@ class TickTickAPIClient:
 
         return Task.from_dict(response)
 
-    async def complete_task(self, projectId: str, taskId: str) -> str:
+    async def complete_task(
+        self, projectId: str, taskId: str, returnAsJson: bool = False
+    ) -> str:
         """Complete a task."""
         return await self._post(
             COMPLETE_TASK.format(projectId=projectId, taskId=taskId)
         )
 
-    async def delete_task(self, projectId: str, taskId: str) -> str:
+    async def delete_task(
+        self, projectId: str, taskId: str, returnAsJson: bool = False
+    ) -> str:
         """Delete a task."""
         return await self._delete(
             DELETE_TASK.format(projectId=projectId, taskId=taskId)
@@ -75,9 +79,9 @@ class TickTickAPIClient:
         mappedResponse = [Project.from_dict(project) for project in response]
         filtered_projects = list(
             filter(
-                lambda project: project.kind == Kind.TASK and not project.closed,
+                lambda project: not project.closed,
                 mappedResponse,
-            )  # Filtering out for now Notes
+            )
         )
         return filtered_projects
 

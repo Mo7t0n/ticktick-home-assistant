@@ -1,8 +1,10 @@
 import asyncio
-from typing import Any
 from datetime import datetime
+import logging
+from typing import Any
 
 from custom_components.ticktick.coordinator import TickTickCoordinator
+from custom_components.ticktick.ticktick_api_python.models.project import Kind
 from custom_components.ticktick.ticktick_api_python.models.task import Task, TaskStatus
 
 from homeassistant.components.todo import (
@@ -18,6 +20,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -25,9 +29,11 @@ async def async_setup_entry(
     """Set up the TickTick todo platform config entry."""
     coordinator: TickTickCoordinator = hass.data[DOMAIN][entry.entry_id]
     projects = await coordinator.async_get_projects()
+    _LOGGER.debug("TickTick todo platform: %d project(s) found", len(projects))
     async_add_entities(
         TickTickTodoListEntity(coordinator, entry.entry_id, project.id, project.name)
         for project in projects
+        if project.kind == Kind.TASK
     )
 
 

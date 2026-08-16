@@ -20,5 +20,15 @@
                 "title": "Pick authentication method"
             }
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "description": "Configure how often TickTick lists are refreshed from the server.",
+                "data": {
+                    "scan_interval": "Sync interval (minutes)"
+                }
+            }
+        }
     }
 }
