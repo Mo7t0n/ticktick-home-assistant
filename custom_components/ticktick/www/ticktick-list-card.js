@@ -10,15 +10,127 @@
 
 const SORT_KEYS = ["dueDate", "priority", "startDate", "title", "tag"];
 
-const SORT_LABELS = {
-  dueDate: "Fälligkeitsdatum",
-  priority: "Priorität",
-  startDate: "Startdatum",
-  title: "Alphabetisch",
-  tag: "Etikett",
+// All the card's own UI text (not the item data itself, which comes from
+// TickTick as-is) lives here in German/English pairs. resolveLanguage/t()
+// below pick between them based on hass.locale.language, falling back to
+// English for anything that isn't German - date/weekday formatting and
+// string sorting are handled separately via Intl (see formatParsedDate/
+// compareBy), which already localizes to whatever exact locale HA reports.
+const STRINGS = {
+  de: {
+    sortDueDate: "Fälligkeitsdatum",
+    sortPriority: "Priorität",
+    sortStartDate: "Startdatum",
+    sortTitle: "Alphabetisch",
+    sortTag: "Etikett",
+    directionAsc: "Aufsteigend",
+    directionDesc: "Absteigend",
+    menuGroup: "Gruppieren nach",
+    menuSort: "Sortieren nach",
+    menuOrder: "Reihenfolge",
+    menuFilter: "Filtern",
+    filterDue: "Fälligkeit",
+    filterActiveCount: (n) => `${n} aktiv`,
+    filterAll: "Alle",
+    priorityNone: "Ohne Priorität",
+    priorityLow: "Niedrig",
+    priorityMedium: "Mittel",
+    priorityHigh: "Hoch",
+    bucketOverdue: "Überfällig",
+    bucketToday: "Heute",
+    bucketTomorrow: "Morgen",
+    bucketNext7: "Nächste 7 Tage",
+    bucketLater: "Später",
+    bucketNoDate: "Kein Datum",
+    noTag: "Ohne Etikett",
+    completedGroup: "Erledigt",
+    reopen: "Wieder öffnen",
+    markComplete: "Als erledigt markieren",
+    note: "Notiz",
+    sortAndFilter: "Sortieren & Filtern",
+    selectEntity: "Bitte eine TickTick-Listen-Entität auswählen.",
+    entityNotFound: (id) => `Entität ${id} wurde nicht gefunden.`,
+    noEntries: "Keine Einträge.",
+    close: "Schließen",
+    detailContent: "Inhalt",
+    detailDue: "Fällig",
+    detailStart: "Start",
+    detailStatus: "Status",
+    statusCompleted: "Erledigt",
+    statusOpen: "Offen",
+    detailTags: "Etiketten",
+    detailChecklist: "Checkliste",
+    editorEntity: "Entität",
+    editorTitle: "Titel (optional)",
+    cardDescription: "Zeigt eine TickTick-Liste (Aufgaben oder Notizen) im Stil der TickTick-App an.",
+  },
+  en: {
+    sortDueDate: "Due date",
+    sortPriority: "Priority",
+    sortStartDate: "Start date",
+    sortTitle: "Alphabetical",
+    sortTag: "Tag",
+    directionAsc: "Ascending",
+    directionDesc: "Descending",
+    menuGroup: "Group by",
+    menuSort: "Sort by",
+    menuOrder: "Order",
+    menuFilter: "Filter",
+    filterDue: "Due date",
+    filterActiveCount: (n) => `${n} active`,
+    filterAll: "All",
+    priorityNone: "No priority",
+    priorityLow: "Low",
+    priorityMedium: "Medium",
+    priorityHigh: "High",
+    bucketOverdue: "Overdue",
+    bucketToday: "Today",
+    bucketTomorrow: "Tomorrow",
+    bucketNext7: "Next 7 days",
+    bucketLater: "Later",
+    bucketNoDate: "No date",
+    noTag: "No tag",
+    completedGroup: "Completed",
+    reopen: "Reopen",
+    markComplete: "Mark as done",
+    note: "Note",
+    sortAndFilter: "Sort & filter",
+    selectEntity: "Please select a TickTick list entity.",
+    entityNotFound: (id) => `Entity ${id} was not found.`,
+    noEntries: "No entries.",
+    close: "Close",
+    detailContent: "Content",
+    detailDue: "Due",
+    detailStart: "Start",
+    detailStatus: "Status",
+    statusCompleted: "Completed",
+    statusOpen: "Open",
+    detailTags: "Tags",
+    detailChecklist: "Checklist",
+    editorEntity: "Entity",
+    editorTitle: "Title (optional)",
+    cardDescription: "Shows a TickTick list (tasks or notes) styled like the TickTick app.",
+  },
 };
 
-const DIRECTION_LABELS = { asc: "Aufsteigend", desc: "Absteigend" };
+function resolveLanguage(language) {
+  return typeof language === "string" && language.toLowerCase().startsWith("de") ? "de" : "en";
+}
+
+function t(key, language, ...args) {
+  const value = STRINGS[resolveLanguage(language)][key] ?? STRINGS.en[key] ?? key;
+  return typeof value === "function" ? value(...args) : value;
+}
+
+const SORT_LABEL_KEYS = {
+  dueDate: "sortDueDate",
+  priority: "sortPriority",
+  startDate: "sortStartDate",
+  title: "sortTitle",
+  tag: "sortTag",
+};
+
+const DIRECTION_LABEL_KEYS = { asc: "directionAsc", desc: "directionDesc" };
 const DIRECTION_ICONS = { asc: "mdi:sort-ascending", desc: "mdi:sort-descending" };
 
 const SORT_KEY_ICONS = {
@@ -34,10 +146,10 @@ const SORT_KEY_ICONS = {
 // items within a group, "Order" is the shared direction toggle. "Filter" is
 // folded into the same popup as a 4th entry instead of its own button/panel.
 const MENU_FIELDS = [
-  { field: "group", label: "Gruppieren nach", icon: "mdi:layers-outline" },
-  { field: "sort", label: "Sortieren nach", icon: "mdi:sort" },
-  { field: "order", label: "Reihenfolge", icon: "mdi:swap-vertical" },
-  { field: "filter", label: "Filtern", icon: "mdi:filter-variant" },
+  { field: "group", labelKey: "menuGroup", icon: "mdi:layers-outline" },
+  { field: "sort", labelKey: "menuSort", icon: "mdi:sort" },
+  { field: "order", labelKey: "menuOrder", icon: "mdi:swap-vertical" },
+  { field: "filter", labelKey: "menuFilter", icon: "mdi:filter-variant" },
 ];
 
 const FILTER_GROUP_ICONS = {
@@ -46,29 +158,26 @@ const FILTER_GROUP_ICONS = {
   due: "mdi:calendar-clock",
 };
 
-const PRIORITY_LABELS = {
-  NONE: "Ohne Priorität",
-  LOW: "Niedrig",
-  MEDIUM: "Mittel",
-  HIGH: "Hoch",
+const PRIORITY_LABEL_KEYS = {
+  NONE: "priorityNone",
+  LOW: "priorityLow",
+  MEDIUM: "priorityMedium",
+  HIGH: "priorityHigh",
 };
 
 const BUCKET_ORDER = ["overdue", "today", "tomorrow", "next7", "later", "noDate"];
 
-const BUCKET_LABELS = {
-  overdue: "Überfällig",
-  today: "Heute",
-  tomorrow: "Morgen",
-  next7: "Nächste 7 Tage",
-  later: "Später",
-  noDate: "Kein Datum",
+const BUCKET_LABEL_KEYS = {
+  overdue: "bucketOverdue",
+  today: "bucketToday",
+  tomorrow: "bucketTomorrow",
+  next7: "bucketNext7",
+  later: "bucketLater",
+  noDate: "bucketNoDate",
 };
 
 const NO_TAG_KEY = "__no_tag__";
-const NO_TAG_LABEL = "Ohne Etikett";
-
 const COMPLETED_GROUP_KEY = "__completed__";
-const COMPLETED_GROUP_LABEL = "Erledigt";
 
 const CHECK_ICON =
   '<svg class="check-icon" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -202,8 +311,8 @@ function formatDueLabel(iso, now, language) {
   const diffDays = Math.round(
     (startOfDay(date).getTime() - startOfDay(now).getTime()) / 86400000
   );
-  if (diffDays === 0) return "Heute";
-  if (diffDays === 1) return "Morgen";
+  if (diffDays === 0) return t("bucketToday", language);
+  if (diffDays === 1) return t("bucketTomorrow", language);
   if (diffDays > 1 && diffDays <= 7) {
     try {
       return new Intl.DateTimeFormat(language || undefined, { weekday: "short" }).format(date);
@@ -434,6 +543,10 @@ class TickTickListCard extends HTMLElement {
     return this._hass.states[this._config.entity];
   }
 
+  _t(key, ...args) {
+    return t(key, this._hass?.locale?.language, ...args);
+  }
+
   _entityItems() {
     const stateObj = this._stateObj();
     return stateObj?.attributes?.items || [];
@@ -466,7 +579,7 @@ class TickTickListCard extends HTMLElement {
     const language = this._hass?.locale?.language;
     // Checked-off items don't just sink within whichever due-date/tag
     // group they'd otherwise fall into - they leave their group entirely
-    // and collect in one "Erledigt" section at the very end of the whole
+    // and collect in one "Completed" section at the very end of the whole
     // list, same as the reference app.
     const isDone = (item) => this._effectiveStatus(item) === "completed";
     const openItems = items.filter((item) => !isDone(item));
@@ -477,7 +590,7 @@ class TickTickListCard extends HTMLElement {
     if (completedItems.length) {
       const cmp = compareBy(this._sortBySecondary, defaultSecondaryDirection(this._sortBySecondary), language);
       groups.push({
-        label: COMPLETED_GROUP_LABEL,
+        label: this._t("completedGroup"),
         key: COMPLETED_GROUP_KEY,
         items: completedItems.slice().sort(cmp),
       });
@@ -507,7 +620,7 @@ class TickTickListCard extends HTMLElement {
           groups.get(bucket).push(item);
         }
         return BUCKET_ORDER.filter((b) => groups.has(b)).map((b) => ({
-          label: BUCKET_LABELS[b],
+          label: this._t(BUCKET_LABEL_KEYS[b]),
           key: b,
           items: groups.get(b).slice().sort(secondaryCmp),
         }));
@@ -524,7 +637,7 @@ class TickTickListCard extends HTMLElement {
           a === NO_TAG_KEY ? 1 : b === NO_TAG_KEY ? -1 : a.localeCompare(b)
         )
         .map((tag) => ({
-          label: tag === NO_TAG_KEY ? NO_TAG_LABEL : capitalize(tag),
+          label: tag === NO_TAG_KEY ? this._t("noTag") : capitalize(tag),
           key: tag,
           color: tag === NO_TAG_KEY ? null : tagColor(tag),
           items: groups.get(tag).slice().sort(secondaryCmp),
@@ -723,11 +836,11 @@ class TickTickListCard extends HTMLElement {
   }
 
   _menuRowValueLabel(field) {
-    if (field === "group") return SORT_LABELS[this._sortBy];
-    if (field === "sort") return SORT_LABELS[this._sortBySecondary];
-    if (field === "order") return DIRECTION_LABELS[this._sortDirection];
+    if (field === "group") return this._t(SORT_LABEL_KEYS[this._sortBy]);
+    if (field === "sort") return this._t(SORT_LABEL_KEYS[this._sortBySecondary]);
+    if (field === "order") return this._t(DIRECTION_LABEL_KEYS[this._sortDirection]);
     const n = this._activeFilterCount();
-    return n ? `${n} aktiv` : "Alle";
+    return n ? this._t("filterActiveCount", n) : this._t("filterAll");
   }
 
   _renderMenu() {
@@ -736,9 +849,9 @@ class TickTickListCard extends HTMLElement {
     if (!this._menuField) {
       return `<div class="menu-popup">
         ${MENU_FIELDS.map(
-          ({ field, label, icon }) => `
+          ({ field, labelKey, icon }) => `
           <div class="menu-row" data-menu-row="${field}">
-            <span class="menu-row-label"><ha-icon icon="${icon}"></ha-icon><span>${label}</span></span>
+            <span class="menu-row-label"><ha-icon icon="${icon}"></ha-icon><span>${this._t(labelKey)}</span></span>
             <span class="menu-row-value">
               <span>${escapeHtml(this._menuRowValueLabel(field))}</span>
               <ha-icon icon="mdi:chevron-right"></ha-icon>
@@ -753,16 +866,16 @@ class TickTickListCard extends HTMLElement {
     }
 
     const field = this._menuField;
-    const fieldLabel = MENU_FIELDS.find((f) => f.field === field).label;
+    const fieldLabel = this._t(MENU_FIELDS.find((f) => f.field === field).labelKey);
     const currentValue =
       field === "order" ? this._sortDirection : field === "group" ? this._sortBy : this._sortBySecondary;
     const options =
       field === "order"
         ? [
-            ["asc", DIRECTION_LABELS.asc, DIRECTION_ICONS.asc],
-            ["desc", DIRECTION_LABELS.desc, DIRECTION_ICONS.desc],
+            ["asc", this._t("directionAsc"), DIRECTION_ICONS.asc],
+            ["desc", this._t("directionDesc"), DIRECTION_ICONS.desc],
           ]
-        : SORT_KEYS.map((k) => [k, SORT_LABELS[k], SORT_KEY_ICONS[k]]);
+        : SORT_KEYS.map((k) => [k, this._t(SORT_LABEL_KEYS[k]), SORT_KEY_ICONS[k]]);
 
     return `<div class="menu-popup">
       <div class="menu-back" data-menu-back="true">
@@ -790,16 +903,16 @@ class TickTickListCard extends HTMLElement {
     return `<div class="menu-popup menu-popup-wide">
       <div class="menu-back" data-menu-back="true">
         <ha-icon icon="mdi:chevron-left"></ha-icon>
-        <span>Filtern</span>
+        <span>${this._t("menuFilter")}</span>
       </div>
       <div class="menu-filter-body">
         <div class="filter-group">
-          <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.priority}"></ha-icon><span>Priorität</span></div>
+          <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.priority}"></ha-icon><span>${this._t("sortPriority")}</span></div>
           <div class="filter-chip-row">
-            ${Object.keys(PRIORITY_LABELS)
+            ${Object.keys(PRIORITY_LABEL_KEYS)
               .map(
                 (p) =>
-                  `<button class="chip ${this._filters.priority.has(p) ? "active" : ""}" style="--chip-color:var(--ticktick-priority-${p.toLowerCase()}-color)" data-filter-group="priority" data-filter-value="${p}">${PRIORITY_LABELS[p]}</button>`
+                  `<button class="chip ${this._filters.priority.has(p) ? "active" : ""}" style="--chip-color:var(--ticktick-priority-${p.toLowerCase()}-color)" data-filter-group="priority" data-filter-value="${p}">${this._t(PRIORITY_LABEL_KEYS[p])}</button>`
               )
               .join("")}
           </div>
@@ -807,7 +920,7 @@ class TickTickListCard extends HTMLElement {
         ${
           tagSet.size
             ? `<div class="filter-group">
-                <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.tag}"></ha-icon><span>Etikett</span></div>
+                <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.tag}"></ha-icon><span>${this._t("sortTag")}</span></div>
                 <div class="filter-chip-row">
                   ${[...tagSet]
                     .sort((a, b) => a.localeCompare(b))
@@ -821,11 +934,11 @@ class TickTickListCard extends HTMLElement {
             : ""
         }
         <div class="filter-group">
-          <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.due}"></ha-icon><span>Fälligkeit</span></div>
+          <div class="filter-group-title"><ha-icon icon="${FILTER_GROUP_ICONS.due}"></ha-icon><span>${this._t("filterDue")}</span></div>
           <div class="filter-chip-row">
             ${BUCKET_ORDER.map(
               (b) =>
-                `<button class="chip ${this._filters.buckets.has(b) ? "active" : ""}" data-filter-group="buckets" data-filter-value="${b}">${BUCKET_LABELS[b]}</button>`
+                `<button class="chip ${this._filters.buckets.has(b) ? "active" : ""}" data-filter-group="buckets" data-filter-value="${b}">${this._t(BUCKET_LABEL_KEYS[b])}</button>`
             ).join("")}
           </div>
         </div>
@@ -846,7 +959,7 @@ class TickTickListCard extends HTMLElement {
 
     if (isNoteItem(item, projectKind)) {
       return `<div class="row note-row" data-id="${escapeHtml(item.id)}">
-        <div class="note-checkbox priority-${priority}" title="Notiz"><svg viewBox="0 0 16 16"><text x="50%" y="52%" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-weight="700">N</text></svg></div>
+        <div class="note-checkbox priority-${priority}" title="${escapeHtml(this._t("note"))}"><svg viewBox="0 0 16 16"><text x="50%" y="52%" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-weight="700">N</text></svg></div>
         <div class="row-main">
           <div class="row-title">${renderText(item.title)}</div>
           ${
@@ -866,7 +979,7 @@ class TickTickListCard extends HTMLElement {
     const hasChecklist = item.kind === "CHECKLIST";
 
     return `<div class="row task-row ${completed ? "completed" : ""}" data-id="${escapeHtml(item.id)}">
-      <button class="checkbox priority-${priority} ${completed ? "checked" : ""}" data-id="${escapeHtml(item.id)}" title="${this._localCompleted.has(item.id) ? "Wieder öffnen" : "Als erledigt markieren"}">${completed ? CHECK_ICON : hasChecklist ? '<span class="checklist-lines"><span></span><span></span></span>' : ""}</button>
+      <button class="checkbox priority-${priority} ${completed ? "checked" : ""}" data-id="${escapeHtml(item.id)}" title="${escapeHtml(this._localCompleted.has(item.id) ? this._t("reopen") : this._t("markComplete"))}">${completed ? CHECK_ICON : hasChecklist ? '<span class="checklist-lines"><span></span><span></span></span>' : ""}</button>
       <div class="row-main">
         <div class="row-title">${renderText(item.title)}</div>
         ${
@@ -894,33 +1007,33 @@ class TickTickListCard extends HTMLElement {
 
     const rows = [];
     if (item.content) {
-      rows.push(["Inhalt", renderText(item.content)]);
+      rows.push([this._t("detailContent"), renderText(item.content)]);
     }
     if (item.due_date) {
-      rows.push(["Fällig", escapeHtml(formatDueDate(item.due_date, lang))]);
+      rows.push([this._t("detailDue"), escapeHtml(formatDueDate(item.due_date, lang))]);
     }
     if (item.start_date) {
-      rows.push(["Start", escapeHtml(formatDate(item.start_date, lang))]);
+      rows.push([this._t("detailStart"), escapeHtml(formatDate(item.start_date, lang))]);
     }
-    rows.push(["Priorität", escapeHtml(PRIORITY_LABELS[item.priority || "NONE"])]);
+    rows.push([this._t("sortPriority"), escapeHtml(this._t(PRIORITY_LABEL_KEYS[item.priority || "NONE"]))]);
     if (!isNoteItem(item, projectKind)) {
-      rows.push(["Status", status === "completed" ? "Erledigt" : "Offen"]);
+      rows.push([this._t("detailStatus"), status === "completed" ? this._t("statusCompleted") : this._t("statusOpen")]);
     }
     if (item.tags && item.tags.length) {
       rows.push([
-        "Etiketten",
+        this._t("detailTags"),
         `<div class="tag-row">${item.tags.map((t) => `<span class="tag-chip" style="background:${tagColor(t)}">${escapeHtml(capitalize(t))}</span>`).join("")}</div>`,
       ]);
     }
     if (item.kind === "CHECKLIST" && item.items && item.items.length) {
-      rows.push(["Checkliste", this._renderSubtaskList(item)]);
+      rows.push([this._t("detailChecklist"), this._renderSubtaskList(item)]);
     }
 
     return `<div class="detail-overlay">
       <div class="detail-card">
         <div class="detail-header">
           <div class="detail-title">${renderText(item.title)}</div>
-          <button class="icon-btn detail-close" title="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+          <button class="icon-btn detail-close" title="${escapeHtml(this._t("close"))}"><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
         <div class="detail-body">
           ${rows.map(([label, value]) => `<div class="detail-row"><div class="detail-label">${label}</div><div>${value}</div></div>`).join("")}
@@ -935,7 +1048,7 @@ class TickTickListCard extends HTMLElement {
         .map((sub) => {
           const subCompleted = this._localCompleted.has(sub.id) || sub.status === "completed";
           return `<div class="subtask-row" data-parent-id="${escapeHtml(item.id)}" data-subtask-id="${escapeHtml(sub.id)}">
-            <button class="checkbox subtask-checkbox ${subCompleted ? "checked" : ""}" title="${this._localCompleted.has(sub.id) ? "Wieder öffnen" : "Als erledigt markieren"}">${subCompleted ? CHECK_ICON : ""}</button>
+            <button class="checkbox subtask-checkbox ${subCompleted ? "checked" : ""}" title="${escapeHtml(this._localCompleted.has(sub.id) ? this._t("reopen") : this._t("markComplete"))}">${subCompleted ? CHECK_ICON : ""}</button>
             <span class="subtask-title ${subCompleted ? "completed" : ""}">${escapeHtml(sub.title)}</span>
           </div>`;
         })
@@ -947,14 +1060,14 @@ class TickTickListCard extends HTMLElement {
     if (!this._config) return;
 
     if (!this._config.entity) {
-      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">Bitte eine TickTick-Listen-Entität auswählen.</div></ha-card>`;
+      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">${this._t("selectEntity")}</div></ha-card>`;
       return;
     }
 
     const stateObj = this._stateObj();
 
     if (!stateObj) {
-      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">Entität ${escapeHtml(this._config.entity)} wurde nicht gefunden.</div></ha-card>`;
+      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">${this._t("entityNotFound", escapeHtml(this._config.entity))}</div></ha-card>`;
       return;
     }
 
@@ -990,12 +1103,12 @@ class TickTickListCard extends HTMLElement {
         <div class="header">
           <div class="title">${escapeHtml(title)}</div>
           <div class="controls">
-            <button id="menu-toggle" class="icon-btn" title="Sortieren &amp; Filtern"><ha-icon icon="mdi:tune"></ha-icon></button>
+            <button id="menu-toggle" class="icon-btn" title="${escapeHtml(this._t("sortAndFilter"))}"><ha-icon icon="mdi:tune"></ha-icon></button>
           </div>
           ${this._renderMenu()}
         </div>
         <div class="list-body">
-          ${visible.length ? body : '<div class="empty">Keine Einträge.</div>'}
+          ${visible.length ? body : `<div class="empty">${this._t("noEntries")}</div>`}
         </div>
       </ha-card>
       ${this._renderDetail(projectKind)}`;
@@ -1338,6 +1451,10 @@ class TickTickListCardEditor extends HTMLElement {
     this._render();
   }
 
+  _t(key) {
+    return t(key, this._hass?.locale?.language);
+  }
+
   _schema() {
     // Sort/filter defaults are configured live in the card's own popup menu
     // instead (see MENU_FIELDS). Height/width live in HA's own native
@@ -1351,8 +1468,8 @@ class TickTickListCardEditor extends HTMLElement {
 
   _labels() {
     return {
-      entity: "Entität",
-      title: "Titel (optional)",
+      entity: this._t("editorEntity"),
+      title: this._t("editorTitle"),
     };
   }
 
@@ -1383,5 +1500,8 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "ticktick-list-card",
   name: "TickTick List",
-  description: "Zeigt eine TickTick-Liste (Aufgaben oder Notizen) im Stil der TickTick-App an.",
+  // The card picker isn't tied to any specific dashboard/entity here, so
+  // there's no hass.locale to read - the browser's own language is the
+  // best available signal for this one description string.
+  description: t("cardDescription", typeof navigator !== "undefined" ? navigator.language : undefined),
 });
