@@ -6,8 +6,14 @@ import datetime
 import logging
 from pathlib import Path
 
+from aiohttp import web
+
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig, async_import_module
+from homeassistant.components.http import (
+    HomeAssistantView,
+    StaticPathConfig,
+    async_import_module,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, SupportsResponse
@@ -80,12 +86,51 @@ async def async_unload_entry(hass: HomeAssistant, entry: TickTickConfigEntry) ->
     return unload_ok
 
 
+class TickTickCardView(HomeAssistantView):
+    """Serve the bundled dashboard card JS with an explicit content-type.
+
+    hass.http.async_register_static_paths (used below for the rest of the
+    www/ folder) leaves content-type detection to aiohttp, which falls
+    back to the *host's* mimetypes database for the file extension. On
+    some setups that database doesn't map .js to anything, so the
+    response comes back with NO Content-Type header at all - and browsers
+    refuse to execute that as a module under X-Content-Type-Options:
+    nosniff (which Home Assistant's own middleware always adds), so the
+    custom element never gets defined even though the file itself loads
+    fine. Serving this one file through a dedicated view with an explicit
+    content_type sidesteps that regardless of the host's mimetypes config.
+    """
+
+    url = CARD_JS_URL
+    name = "ticktick:card_js"
+    requires_auth = False
+
+    def __init__(self, hass: HomeAssistant, js_path: Path) -> None:
+        """Initialize the view."""
+        self._hass = hass
+        self._js_path = js_path
+
+    async def get(self, request: web.Request) -> web.Response:
+        """Serve the card's JavaScript."""
+        content = await self._hass.async_add_executor_job(
+            self._js_path.read_text, "utf-8"
+        )
+        return web.Response(text=content, content_type="text/javascript")
+
+
 async def register_frontend_card(hass: HomeAssistant) -> None:
     """Register the bundled TickTick Lovelace card as a frontend resource."""
     if hass.data.get(DOMAIN, {}).get("frontend_registered"):
         return
 
     www_path = Path(__file__).parent / "www"
+
+    # Registered before the static path below, so this exact route wins
+    # over the static resource's own (prefix-based) match for the same
+    # URL - the static resource still covers everything else in www/
+    # (e.g. the README screenshot), just not this one file anymore.
+    hass.http.register_view(TickTickCardView(hass, www_path / "ticktick-list-card.js"))
+
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
     )
