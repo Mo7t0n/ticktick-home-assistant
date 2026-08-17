@@ -1,8 +1,5 @@
 # Home Assistant TickTick Integration
 
-![GitHub Repo stars](https://img.shields.io/github/stars/Mo7t0n/ticktick-home-assistant?style=for-the-badge&color=%23AFB0CC)
-![GitHub Release](https://img.shields.io/github/v/release/Mo7t0n/ticktick-home-assistant?style=for-the-badge&color=%231CB00A)
-
 Integration implements [TickTick Open API](https://developer.ticktick.com/docs#/openapi) with support for [To-do list](https://www.home-assistant.io/integrations/todo/) entities and exposes it as services in Home Assistant, allowing you to manage your tasks and projects programmatically.
 
 This is a fork of [Hantick/ticktick-home-assistant](https://github.com/Hantick/ticktick-home-assistant), extended with note lists as sensors and a custom `ticktick-list-card` Lovelace card (see below).
