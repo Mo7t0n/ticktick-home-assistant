@@ -1,14 +1,11 @@
 # Home Assistant TickTick Integration
 
-![Static Badge](https://img.shields.io/badge/made%20with-fun-green?style=for-the-badge)‎ ‎ ‎ ‎ ‎ ‎ ‎ ‎ ‎ ‎
-![GitHub Repo stars](https://img.shields.io/github/stars/Hantick/ticktick-home-assistant?style=for-the-badge&color=%23AFB0CC)
-![GitHub Release](https://img.shields.io/github/v/release/Hantick/ticktick-home-assistant?style=for-the-badge&color=%231CB00A)
+![GitHub Repo stars](https://img.shields.io/github/stars/Mo7t0n/ticktick-home-assistant?style=for-the-badge&color=%23AFB0CC)
+![GitHub Release](https://img.shields.io/github/v/release/Mo7t0n/ticktick-home-assistant?style=for-the-badge&color=%231CB00A)
 
-Integration implements [TickTick Open API](https://developer.ticktick.com/docs#/openapi) with support for [To-do list](https://www.home-assistant.io/integrations/todo/) entities and exposes it as services in Home Assistant, allowing you to manage your tasks and projects programmatically 😎
+Integration implements [TickTick Open API](https://developer.ticktick.com/docs#/openapi) with support for [To-do list](https://www.home-assistant.io/integrations/todo/) entities and exposes it as services in Home Assistant, allowing you to manage your tasks and projects programmatically.
 
-## Buy me a coffee or beer 🍻
-<a href="https://paypal.me/hantick" target="_blank" rel="noopener noreferrer">
-    <img src="https://www.paypalobjects.com/marketing/web/logos/paypal-mark-color.svg" alt="PayPal" height="40"></a>
+This is a fork of [Hantick/ticktick-home-assistant](https://github.com/Hantick/ticktick-home-assistant), extended with note lists as sensors and a custom `ticktick-list-card` Lovelace card (see below).
 
 ## Installation
 
@@ -31,9 +28,11 @@ Note lists (`kind: NOTE` projects) only show up as sensors — they don't get a 
 
 ## Dashboard card
 
-The integration bundles a `ticktick-list-card` Lovelace card (auto-registered as a frontend resource, no manual "Add resource" step needed) that renders a list the way the TickTick app does: a priority-colored checkbox ring and due-date grouping (Überfällig/Heute/Morgen/Nächste 7 Tage/Später) for task lists, or a note/tag-chip layout for note lists.
+![Dashboard card](custom_components/ticktick/www/dashboard-card.png)
 
-A single button opens a TickTick-style popup menu with four rows — **Gruppieren nach** (also drives the visible grouping), **Sortieren nach** (orders items within a group), **Reihenfolge**, and **Filtern** — each drilling into its own sub-view (with icons and a checkmark on the active choice for the first three, multi-select chips for priority/tag/due date under Filtern). These are runtime choices made through the popup itself, not part of the visual card editor.
+The integration bundles a `ticktick-list-card` Lovelace card (auto-registered as a frontend resource, no manual "Add resource" step needed) that renders a list the way the TickTick app does: a priority-colored checkbox ring and due-date grouping (Overdue/Today/Tomorrow/Next 7 days/Later) for task lists, or a note/tag-chip layout for note lists. Completed items collect in their own "Completed" section at the end of the list. The card's own UI text follows Home Assistant's language setting (German or English; anything else falls back to English) — this is separate from the item content itself, which is shown exactly as it comes from TickTick.
+
+A single button opens a TickTick-style popup menu with four rows — **Group by** (also drives the visible grouping), **Sort by** (orders items within a group), **Order**, and **Filter** — each drilling into its own sub-view (with icons and a checkmark on the active choice for the first three, multi-select chips for priority/tag/due date under Filter). These are runtime choices made through the popup itself, not part of the visual card editor.
 
 ```yaml
 type: custom:ticktick-list-card
@@ -44,7 +43,7 @@ The visual editor only exposes `entity` and `title`. `sort_by`/`sort_by_secondar
 
 Clicking a row's checkbox marks it complete; clicking a row's title/content opens a detail view with all its fields. Description text is clipped to 1 line in the list itself. A checklist-kind task (one with its own sub-items) gets a small list icon inside its checkbox, and its detail view lists each checklist item with its own clickable checkbox (there's no dedicated TickTick API for completing a single checklist item, so this fetches the task, flips that one item's status, and writes the task back).
 
-Since TickTick's API never returns completed tasks, a checked-off item stays visible with a strikethrough (rather than vanishing immediately) only until the next refresh confirms it and drops it from the list. Clicking a just-checked-off item again undoes it locally, as long as it's still showing (i.e. hasn't disappeared from the list on the next sync yet).
+Checking off a task (or checklist item) shows it as done right away, but the actual completion isn't reported to TickTick until a minute later — clicking it again before then cancels the report outright, since TickTick has no "reopen" endpoint to undo an already-sent completion with. A checklist task with all of its sub-items checked off completes itself the same way. Since TickTick's API never returns completed tasks, a reported completion then simply vanishes from the list on the next sync.
 
 ### Sync interval
 
@@ -55,7 +54,7 @@ The integration polls TickTick once a minute by default. To change that, go to S
 ### Task Services
 
 Get, Create, Update, Delete, Complete Task, Complete Checklist Item (sub-task)
-![alt text](image.png)
+
 ### Project Services
 
 Get (Create, Update, Delete are missing for now)
