@@ -2,7 +2,8 @@
   "domain": "ticktick",
   "name": "TickTick",
   "codeowners": [
-    "@Hantick"
+    "@Hantick",
+    "@Mo7t0n"
   ],
   "config_flow": true,
   "dependencies": [
