@@ -1124,6 +1124,9 @@ class TickTickListCard extends HTMLElement {
       }
       :host { display: block; height: 100%; }
       ha-card {
+        /* ha-card already themes its own background/border/border-radius/
+           box-shadow just by using the element - none of that needs
+           setting here, it comes from the dashboard/theme automatically. */
         padding: 0;
         height: 100%;
         display: flex;
@@ -1241,7 +1244,23 @@ class TickTickListCard extends HTMLElement {
          priority/tag" at a glance. Chips without a --chip-color (the
          Fälligkeit/due-bucket group) fall back to the plain accent color. */
       .chip.active { background: var(--chip-color, var(--primary-color)); color: var(--text-primary-color, #fff); border-color: var(--chip-color, var(--primary-color)); }
-      .list-body { padding: 4px 0 8px 0; flex: 1; min-height: 0; overflow-y: auto; }
+      .list-body {
+        padding: 4px 0 8px 0;
+        flex: 1;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        /* Row content (hover highlights, dividers) reaches edge-to-edge,
+           so without this it can paint past ha-card's own rounded bottom
+           corners as a square instead of following them - the header
+           above has no fill of its own, so the top corners already show
+           ha-card's real background/rounding through untouched and don't
+           need the same treatment. Scoped to just this element (not
+           ha-card itself) so the sort/filter popup - anchored to the
+           header, and taller than a short fixed-height card can be - stays
+           free to overflow past the card's own bottom edge as before. */
+        border-radius: 0 0 var(--ha-card-border-radius, 12px) var(--ha-card-border-radius, 12px);
+      }
       .group-header {
         padding: 8px 16px 4px 16px;
         font-weight: 600;
