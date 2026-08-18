@@ -1171,7 +1171,19 @@ class TickTickListCard extends HTMLElement {
         margin-top: 6px;
         background: var(--card-background-color, #fff);
         color: var(--primary-text-color);
-        border-radius: 12px;
+        /* No dedicated HA token exists for a floating popup's own corner
+           radius (this isn't ha-card chrome or a full ha-dialog) - tying it
+           to the same general design token the rest of the card's "medium"
+           shapes use keeps it moving in step with a theme that only
+           customizes --ha-border-radius-lg, without inventing a new knob. */
+        border-radius: var(--ha-border-radius-lg, 12px);
+        /* --ha-card-box-shadow's own real default (verified against HA's
+           frontend bundle) is "none" - fine for ha-card itself, but wrong
+           here since this is an always-elevated overlay that needs visual
+           separation from the page even when a theme flattens its cards.
+           Reusing the variable still lets a theme's explicit box-shadow
+           choice carry over; the fallback is our own elevation shadow, not
+           the token's real default. */
         box-shadow: var(--ha-card-box-shadow, 0 4px 16px rgba(0, 0, 0, 0.35));
         min-width: 240px;
         overflow: hidden;
@@ -1425,7 +1437,15 @@ class TickTickListCard extends HTMLElement {
       .detail-overlay {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.5);
+        /* Mirrors HA's own ha-dialog scrim exactly (verified against the
+           real frontend bundle): a themeable color layer (defaulting to
+           transparent, same as HA's own default) plus a brightness dip on
+           whatever is behind it, rather than a flat hardcoded black
+           overlay - so a theme that recolors its dialog scrim (dark/AMOLED
+           themes commonly do) affects this overlay the same way it affects
+           every native HA dialog. */
+        background-color: var(--mdc-dialog-scrim-color, transparent);
+        backdrop-filter: var(--ha-dialog-scrim-backdrop-filter, brightness(68%));
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1436,12 +1456,24 @@ class TickTickListCard extends HTMLElement {
       .detail-card {
         background: var(--card-background-color, #fff);
         color: var(--primary-text-color);
-        border-radius: 12px;
+        /* This overlay is a genuine modal dialog, not card chrome - so it
+           mirrors ha-dialog's own radius chain (verified against the real
+           frontend bundle) rather than ha-card's. --ha-dialog-border-radius
+           falls back to the more general --ha-border-radius-2xl token,
+           which defaults to 20px (not 12px) - mirroring the full chain
+           keeps this matching a theme that only customizes the general
+           token, same reasoning as .list-body's border-radius below. */
+        border-radius: var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px));
         max-width: 480px;
         width: 100%;
         max-height: 80vh;
         overflow-y: auto;
-        box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0, 0, 0, 0.3));
+        /* Same reasoning as .menu-popup's box-shadow above: --ha-card-box-
+           shadow's real default is "none", so the fallback here is our own
+           elevation shadow, not the token's actual default - kept
+           identical to .menu-popup's fallback so the two overlays read as
+           part of the same visual language. */
+        box-shadow: var(--ha-card-box-shadow, 0 4px 16px rgba(0, 0, 0, 0.35));
       }
       .detail-header {
         display: flex;
@@ -1452,7 +1484,8 @@ class TickTickListCard extends HTMLElement {
         position: sticky;
         top: 0;
         background: inherit;
-        border-radius: 12px 12px 0 0;
+        border-radius: var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px))
+          var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px)) 0 0;
       }
       .detail-title { font-size: 1.15em; font-weight: 500; word-break: break-word; }
       .detail-body { padding: 0 16px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
