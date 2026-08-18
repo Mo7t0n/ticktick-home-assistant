@@ -179,6 +179,35 @@ const BUCKET_LABEL_KEYS = {
 const NO_TAG_KEY = "__no_tag__";
 const COMPLETED_GROUP_KEY = "__completed__";
 
+// Persists the live sort/group/order/filter state per entity across page
+// reloads (setConfig only ever carries the YAML defaults, never what the
+// user picked in the popup menu - that state used to live purely in memory
+// and vanish on every reload). Keyed by entity id rather than the card
+// instance so the choice survives the card being torn down and recreated
+// (e.g. a dashboard reload), which is exactly the case that needs fixing.
+const STATE_STORAGE_PREFIX = "ticktick-list-card-state:";
+
+function loadStoredState(entityId) {
+  if (!entityId) return null;
+  try {
+    const raw = localStorage.getItem(STATE_STORAGE_PREFIX + entityId);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveStoredState(entityId, state) {
+  if (!entityId) return;
+  try {
+    localStorage.setItem(STATE_STORAGE_PREFIX + entityId, JSON.stringify(state));
+  } catch (err) {
+    // Storage disabled/full/unavailable (e.g. private browsing) - the
+    // in-memory state still works for the rest of this session, it just
+    // won't survive a reload.
+  }
+}
+
 const CHECK_ICON =
   '<svg class="check-icon" viewBox="0 0 16 16"><path d="M3 8.5L6.5 12L13 4.5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -492,15 +521,32 @@ class TickTickListCard extends HTMLElement {
     // dialogs stuck rather than showing a helpful placeholder.
     const cfg = config || {};
     this._config = cfg;
-    this._sortBy = cfg.sort_by || "dueDate";
-    this._sortBySecondary = cfg.sort_by_secondary || "title";
-    this._sortDirection = cfg.sort_direction === "desc" ? "desc" : "asc";
+    // The user's live choices (from a previous session, or from before this
+    // element got torn down and recreated) take priority over the YAML
+    // defaults below - those defaults only ever apply the very first time a
+    // given entity's card is used.
+    const stored = loadStoredState(cfg.entity) || {};
+    this._sortBy = stored.sortBy || cfg.sort_by || "dueDate";
+    this._sortBySecondary = stored.sortBySecondary || cfg.sort_by_secondary || "title";
+    this._sortDirection =
+      stored.sortDirection || (cfg.sort_direction === "desc" ? "desc" : "asc");
     this._filters = {
-      priority: new Set(cfg.filter_priority || []),
-      tags: new Set(cfg.filter_tags || []),
-      buckets: new Set(cfg.filter_due_buckets || []),
+      priority: new Set(stored.filterPriority || cfg.filter_priority || []),
+      tags: new Set(stored.filterTags || cfg.filter_tags || []),
+      buckets: new Set(stored.filterDueBuckets || cfg.filter_due_buckets || []),
     };
     this._detailItem = null;
+  }
+
+  _persistState() {
+    saveStoredState(this._config?.entity, {
+      sortBy: this._sortBy,
+      sortBySecondary: this._sortBySecondary,
+      sortDirection: this._sortDirection,
+      filterPriority: [...this._filters.priority],
+      filterTags: [...this._filters.tags],
+      filterDueBuckets: [...this._filters.buckets],
+    });
   }
 
   getGridOptions() {
@@ -729,6 +775,7 @@ class TickTickListCard extends HTMLElement {
       else if (field === "order") this._sortDirection = value;
       this._menuOpen = false;
       this._menuField = null;
+      this._persistState();
       this._render();
       return;
     }
@@ -742,6 +789,7 @@ class TickTickListCard extends HTMLElement {
       const set = this._filters[group];
       if (set.has(value)) set.delete(value);
       else set.add(value);
+      this._persistState();
       this._render();
     }
   }
