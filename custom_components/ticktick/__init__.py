@@ -99,23 +99,38 @@ class TickTickCardView(HomeAssistantView):
     custom element never gets defined even though the file itself loads
     fine. Serving this one file through a dedicated view with an explicit
     content_type sidesteps that regardless of the host's mimetypes config.
+
+    Built on aiohttp's own FileResponse (not a plain in-memory web.Response)
+    so it gets working ETag/Last-Modified conditional-GET support for free,
+    same as every other HA frontend resource - explicitly passing our own
+    Content-Type header here still overrides FileResponse's built-in type
+    guessing, so that part of the fix above is untouched. Without this, the
+    browser had to re-fetch and re-parse the whole file on every single
+    page load with no caching at all; on a hard reload that made this
+    file's load slow enough to occasionally lose the race against HA
+    frontend's hardcoded 2-second customElements.whenDefined() timeout
+    (verified in the frontend bundle), surfacing as an intermittent
+    "Custom element doesn't exist" error that a second reload "fixed" only
+    by chance. Cache-Control: no-cache still forces a conditional
+    revalidation on every load (not a hardcoded max-age), so an updated
+    file is always picked up immediately - it just makes that check itself
+    a fast 304 instead of a full re-transfer.
     """
 
     url = CARD_JS_URL
     name = "ticktick:card_js"
     requires_auth = False
 
-    def __init__(self, hass: HomeAssistant, js_path: Path) -> None:
+    def __init__(self, js_path: Path) -> None:
         """Initialize the view."""
-        self._hass = hass
         self._js_path = js_path
 
-    async def get(self, request: web.Request) -> web.Response:
+    async def get(self, request: web.Request) -> web.FileResponse:
         """Serve the card's JavaScript."""
-        content = await self._hass.async_add_executor_job(
-            self._js_path.read_text, "utf-8"
+        return web.FileResponse(
+            self._js_path,
+            headers={"Content-Type": "text/javascript", "Cache-Control": "no-cache"},
         )
-        return web.Response(text=content, content_type="text/javascript")
 
 
 async def register_frontend_card(hass: HomeAssistant) -> None:
@@ -129,7 +144,7 @@ async def register_frontend_card(hass: HomeAssistant) -> None:
     # over the static resource's own (prefix-based) match for the same
     # URL - the static resource still covers everything else in www/
     # (e.g. the README screenshot), just not this one file anymore.
-    hass.http.register_view(TickTickCardView(hass, www_path / "ticktick-list-card.js"))
+    hass.http.register_view(TickTickCardView(www_path / "ticktick-list-card.js"))
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
