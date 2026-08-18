@@ -213,7 +213,7 @@ const MARKDOWN_LINK_RE = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
 
 function renderText(value) {
   // TickTick descriptions/titles can carry markdown-style links, e.g.
-  // "[🤝 How to share a list](https://...)" - shown as-is those brackets
+  // "[How to share a list](https://...)" - shown as-is those brackets
   // and the raw URL would just be noise, so they're rendered as a plain
   // clickable link (label only) instead. Runs before escapeHtml/linkify so
   // the raw '[' ']' '(' ')' syntax chars are consumed here, not escaped.
