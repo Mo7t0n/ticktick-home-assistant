@@ -1217,14 +1217,46 @@ class TickTickListCard extends HTMLElement {
         top: 100%;
         right: 16px;
         margin-top: 6px;
-        background: var(--card-background-color, #fff);
+        box-sizing: border-box;
+        /* This popup is visually an extension of ha-card itself (it hangs
+           directly off the card's own header), not a separate floating
+           menu or a dialog - so unlike .detail-card below (a genuine modal,
+           mirroring ha-dialog's tokens instead), it mirrors ha-card's own
+           border/radius chain exactly (verified against the real HA
+           frontend bundle), right down to the 1px border ha-card renders
+           by default. A theme that reskins its cards' border/radius then
+           reskins this popup's border/radius the same way. Background is
+           its own fixed dark-glass look instead (see below), not mirrored
+           from the theme. */
+        /* Frosted glass, not a solid panel: an opaque background (ha-card's
+           own real default) would make the blur below invisible - there'd
+           be nothing showing through it to blur. Deliberately a fixed
+           dark gray rather than the theme's own (possibly light) card
+           color, so the frosted look stays consistent across themes
+           instead of flipping to a white pane on light dashboards.
+           Text/icon/divider colors inside the popup are locally
+           overridden right below for the same reason - a fixed dark
+           background needs fixed light text, not whatever --primary-
+           text-color the active theme happens to use. */
+        background: rgba(28, 28, 30, 0.8);
+        --primary-text-color: #fff;
+        --secondary-text-color: rgba(255, 255, 255, 0.7);
+        --divider-color: rgba(255, 255, 255, 0.16);
+        /* Real frosted-glass recipe (blur + a saturation boost so colors
+           showing through don't just look washed-out gray): mirrors
+           --ha-card-backdrop-filter so a theme's own explicit choice still
+           wins, same as the box-shadow fallback below, but with a strong
+           blur+saturate default instead of ha-card's real "none" - a plain
+           blur alone reads muddy without the saturation boost. -webkit-
+           prefix included because Safari still requires it for
+           backdrop-filter to apply at all (verified against ha-card's own
+           real CSS, which carries the same prefix for the same reason). */
+        -webkit-backdrop-filter: var(--ha-card-backdrop-filter, blur(60px) saturate(200%));
+        backdrop-filter: var(--ha-card-backdrop-filter, blur(60px) saturate(200%));
+        border: var(--ha-card-border-width, 1px) solid
+          var(--ha-card-border-color, var(--divider-color, #e0e0e0));
+        border-radius: var(--ha-card-border-radius, var(--ha-border-radius-lg, 12px));
         color: var(--primary-text-color);
-        /* No dedicated HA token exists for a floating popup's own corner
-           radius (this isn't ha-card chrome or a full ha-dialog) - tying it
-           to the same general design token the rest of the card's "medium"
-           shapes use keeps it moving in step with a theme that only
-           customizes --ha-border-radius-lg, without inventing a new knob. */
-        border-radius: var(--ha-border-radius-lg, 12px);
         /* --ha-card-box-shadow's own real default (verified against HA's
            frontend bundle) is "none" - fine for ha-card itself, but wrong
            here since this is an always-elevated overlay that needs visual
