@@ -1258,8 +1258,15 @@ class TickTickListCard extends HTMLElement {
            need the same treatment. Scoped to just this element (not
            ha-card itself) so the sort/filter popup - anchored to the
            header, and taller than a short fixed-height card can be - stays
-           free to overflow past the card's own bottom edge as before. */
-        border-radius: 0 0 var(--ha-card-border-radius, 12px) var(--ha-card-border-radius, 12px);
+           free to overflow past the card's own bottom edge as before.
+           --ha-card-border-radius itself falls back to the more general
+           --ha-border-radius-lg design token (both default to 12px) if a
+           theme doesn't set it directly - mirroring that exact chain here
+           (rather than just falling straight to a hardcoded 12px) is what
+           keeps this matching custom themes that only customize the more
+           general token. */
+        border-radius: 0 0 var(--ha-card-border-radius, var(--ha-border-radius-lg, 12px))
+          var(--ha-card-border-radius, var(--ha-border-radius-lg, 12px));
       }
       .group-header {
         padding: 8px 16px 4px 16px;
