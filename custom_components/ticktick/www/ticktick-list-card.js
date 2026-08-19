@@ -536,6 +536,13 @@ class TickTickListCard extends HTMLElement {
       buckets: new Set(stored.filterDueBuckets || cfg.filter_due_buckets || []),
     };
     this._detailItem = null;
+    // setConfig can land after hass already has (e.g. the visual editor's
+    // live preview re-configuring an already-hass'd card element in place,
+    // or config changing without a fresh custom-element instance) - the
+    // hass setter below won't otherwise notice anything changed here (it
+    // only reacts to the *entity's own state object* changing), so this is
+    // the only path that would ever re-render for a config-only change.
+    if (this._hass) this._render();
   }
 
   _persistState() {
@@ -559,8 +566,29 @@ class TickTickListCard extends HTMLElement {
   }
 
   set hass(hass) {
+    // HA calls this setter on *every* state change anywhere in the whole
+    // system, not just to this card's own entity - a plain unconditional
+    // `this._render()` here means a full `shadowRoot.innerHTML` replacement
+    // (destroying and recreating <ha-card> and everything under it) on
+    // every single one of those, which on a busy instance can be many
+    // times a second. Besides the wasted work, that's actively hostile to
+    // anything reaching into this card's shadow root from outside and
+    // touching that DOM directly - a theme-wide card-mod style targeting
+    // ha-card, say - since a full re-render throws away whatever it
+    // attached, every time, often faster than it can reapply. HA's own
+    // state objects are immutable and only get a new reference when that
+    // exact entity's state actually changes, so comparing references (not
+    // deep-equality) is the standard, cheap way to detect "did anything
+    // this card actually reads change" - locale is checked too since it
+    // drives every _t()/Intl call in _render() but isn't part of any
+    // entity's state object.
+    const oldHass = this._hass;
     this._hass = hass;
-    this._render();
+    if (!this._config) return;
+    const entity = this._config.entity;
+    const stateChanged = !oldHass || oldHass.states[entity] !== hass.states[entity];
+    const localeChanged = oldHass?.locale?.language !== hass?.locale?.language;
+    if (stateChanged || localeChanged) this._render();
   }
 
   getCardSize() {

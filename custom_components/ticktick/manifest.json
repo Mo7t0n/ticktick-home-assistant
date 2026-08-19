@@ -1,6 +1,9 @@
 {
   "domain": "ticktick",
   "name": "TickTick",
+  "after_dependencies": [
+    "lovelace"
+  ],
   "codeowners": [
     "@Hantick",
     "@Mo7t0n"
