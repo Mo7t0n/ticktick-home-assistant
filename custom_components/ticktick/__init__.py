@@ -139,17 +139,38 @@ async def register_frontend_card(hass: HomeAssistant) -> None:
         return
 
     www_path = Path(__file__).parent / "www"
+    card_js_path = www_path / "ticktick-list-card.js"
 
     # Registered before the static path below, so this exact route wins
     # over the static resource's own (prefix-based) match for the same
     # URL - the static resource still covers everything else in www/
     # (e.g. the README screenshot), just not this one file anymore.
-    hass.http.register_view(TickTickCardView(www_path / "ticktick-list-card.js"))
+    hass.http.register_view(TickTickCardView(card_js_path))
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
     )
-    add_extra_js_url(hass, CARD_JS_URL)
+
+    # TickTickCardView already serves this with an ETag/Last-Modified, so a
+    # plain reload always revalidates - but that's no defense against a
+    # caching layer that doesn't play by those rules (browsers vary in how
+    # strictly they honor conditional-GET on a hard reload, and HA's own
+    # PWA service worker may intercept this fetch entirely before it ever
+    # reaches the network). Appending the file's own mtime as a query
+    # string makes the *URL itself* change whenever the file's contents
+    # change, which every caching layer treats as a completely unrelated,
+    # never-before-seen resource - a guaranteed cache miss, independent of
+    # whatever caching behavior is actually in play. aiohttp routes match
+    # on path only, so this doesn't need any matching change on the
+    # TickTickCardView registration above. Computed once here (at
+    # integration setup) rather than per-request like the view's own
+    # ETag, since add_extra_js_url's URL is baked into index.html for the
+    # whole hass lifetime - picking up a change requires a full HA
+    # restart either way (this function's own frontend_registered guard
+    # above already only runs once per restart), same as any other
+    # custom_component code change already does.
+    mtime_ns = await hass.async_add_executor_job(lambda: card_js_path.stat().st_mtime_ns)
+    add_extra_js_url(hass, f"{CARD_JS_URL}?v={mtime_ns}")
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["frontend_registered"] = True
