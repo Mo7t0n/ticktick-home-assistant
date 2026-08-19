@@ -1132,18 +1132,43 @@ class TickTickListCard extends HTMLElement {
     </div>`;
   }
 
+  _ensureDom() {
+    // <ha-card> (and the shadow root generally) is created exactly once
+    // here and never replaced again - every _render() below only ever
+    // mutates *contents* (ha-card.innerHTML / the detail slot's
+    // innerHTML), never re-creates ha-card itself. That matters because
+    // external tooling that reaches into an open shadow root and modifies
+    // ha-card directly - a theme-wide card-mod style, in particular -
+    // attaches to *this specific node*. The previous approach (the whole
+    // shadow root replaced via one big innerHTML template on every
+    // render, including every click inside the card - opening the menu,
+    // toggling a filter chip, anything) tore that exact node out and
+    // rebuilt a fresh one each time, discarding whatever had been
+    // attached to it. Confirmed as the actual cause of a reported bug:
+    // card-mod's theme reverted within seconds of any interaction with
+    // the card, never observed on a test instance without card-mod's
+    // theme-wide styling active.
+    if (this._cardEl) return;
+    this.shadowRoot.innerHTML = `${this._styles()}<ha-card></ha-card><div class="detail-slot"></div>`;
+    this._cardEl = this.shadowRoot.querySelector("ha-card");
+    this._detailSlot = this.shadowRoot.querySelector(".detail-slot");
+  }
+
   _render() {
     if (!this._config) return;
+    this._ensureDom();
 
     if (!this._config.entity) {
-      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">${this._t("selectEntity")}</div></ha-card>`;
+      this._cardEl.innerHTML = `<div class="warning">${this._t("selectEntity")}</div>`;
+      this._detailSlot.innerHTML = "";
       return;
     }
 
     const stateObj = this._stateObj();
 
     if (!stateObj) {
-      this.shadowRoot.innerHTML = `${this._styles()}<ha-card><div class="warning">${this._t("entityNotFound", escapeHtml(this._config.entity))}</div></ha-card>`;
+      this._cardEl.innerHTML = `<div class="warning">${this._t("entityNotFound", escapeHtml(this._config.entity))}</div>`;
+      this._detailSlot.innerHTML = "";
       return;
     }
 
@@ -1174,8 +1199,7 @@ class TickTickListCard extends HTMLElement {
       )
       .join("");
 
-    this.shadowRoot.innerHTML = `${this._styles()}
-      <ha-card>
+    this._cardEl.innerHTML = `
         <div class="header">
           <div class="title">${escapeHtml(title)}</div>
           <div class="controls">
@@ -1185,9 +1209,8 @@ class TickTickListCard extends HTMLElement {
         </div>
         <div class="list-body">
           ${visible.length ? body : `<div class="empty">${this._t("noEntries")}</div>`}
-        </div>
-      </ha-card>
-      ${this._renderDetail(projectKind)}`;
+        </div>`;
+    this._detailSlot.innerHTML = this._renderDetail(projectKind);
   }
 
   _styles() {
@@ -1199,6 +1222,11 @@ class TickTickListCard extends HTMLElement {
         --ticktick-priority-high-color: #f2454a;
       }
       :host { display: block; height: 100%; }
+      /* Purely a stable mount point for the detail overlay's innerHTML
+         (see _ensureDom) - the overlay itself is position:fixed and
+         doesn't need a positioned/sized ancestor, so this shouldn't
+         generate a box of its own at all. */
+      .detail-slot { display: contents; }
       ha-card {
         /* ha-card already themes its own background/border/border-radius/
            box-shadow just by using the element - none of that needs
