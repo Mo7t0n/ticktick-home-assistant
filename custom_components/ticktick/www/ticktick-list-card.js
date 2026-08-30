@@ -84,14 +84,14 @@ const STRINGS = {
     entityNotFound: (id) => `Entität ${id} wurde nicht gefunden.`,
     noEntries: "Keine Einträge.",
     close: "Schließen",
-    detailContent: "Inhalt",
     detailDue: "Fällig",
     detailStart: "Start",
     detailStatus: "Status",
     statusCompleted: "Erledigt",
     statusOpen: "Offen",
     detailTags: "Etiketten",
-    detailChecklist: "Checkliste",
+    addTag: "Etikett hinzufügen",
+    removeTag: "Etikett entfernen",
     editorEntity: "Entität",
     editorTitle: "Titel (optional)",
     cardDescription: "Zeigt eine TickTick-Liste (Aufgaben oder Notizen) im Stil der TickTick-App an.",
@@ -132,14 +132,14 @@ const STRINGS = {
     entityNotFound: (id) => `Entity ${id} was not found.`,
     noEntries: "No entries.",
     close: "Close",
-    detailContent: "Content",
     detailDue: "Due",
     detailStart: "Start",
     detailStatus: "Status",
     statusCompleted: "Completed",
     statusOpen: "Open",
     detailTags: "Tags",
-    detailChecklist: "Checklist",
+    addTag: "Add tag",
+    removeTag: "Remove tag",
     editorEntity: "Entity",
     editorTitle: "Title (optional)",
     cardDescription: "Shows a TickTick list (tasks or notes) styled like the TickTick app.",
@@ -828,6 +828,11 @@ class TickTickListCard extends HTMLElement {
       if (parent && sub) this._toggleSubtask(parent, sub);
       return;
     }
+    const tagToggle = ev.target.closest("[data-tag-toggle]");
+    if (tagToggle) {
+      if (this._detailItem) this._toggleItemTag(this._detailItem, tagToggle.dataset.tagToggle);
+      return;
+    }
     const checkbox = ev.target.closest(".checkbox");
     if (checkbox) {
       const id = checkbox.dataset.id;
@@ -1145,35 +1150,45 @@ class TickTickListCard extends HTMLElement {
     </div>`;
   }
 
+  // Content first (the description a user is most likely to actually read),
+  // then checklist, then tags - the three most frequently read/edited
+  // things surfaced right under the title instead of buried below the
+  // (mostly read-only) metadata, per explicit ordering request. Due/start/
+  // priority/status are what's left, folded into one compact wrapping row
+  // (see .detail-facts) instead of one full-width block each.
   _renderDetail(projectKind) {
     const item = this._detailItem;
     if (!item) return "";
     const status = this._effectiveStatus(item);
     const lang = this._hass?.locale?.language;
 
-    const rows = [];
+    const sections = [];
+
     if (item.content) {
-      rows.push([this._t("detailContent"), renderText(item.content)]);
+      sections.push(`<div class="detail-section">${renderText(item.content)}</div>`);
     }
-    if (item.due_date) {
-      rows.push([this._t("detailDue"), escapeHtml(formatDueDate(item.due_date, lang))]);
-    }
-    if (item.start_date) {
-      rows.push([this._t("detailStart"), escapeHtml(formatDate(item.start_date, lang))]);
-    }
-    rows.push([this._t("sortPriority"), escapeHtml(this._t(PRIORITY_LABEL_KEYS[item.priority || "NONE"]))]);
-    if (!isNoteItem(item, projectKind)) {
-      rows.push([this._t("detailStatus"), status === "completed" ? this._t("statusCompleted") : this._t("statusOpen")]);
-    }
-    if (item.tags && item.tags.length) {
-      rows.push([
-        this._t("detailTags"),
-        `<div class="tag-row">${item.tags.map((t) => `<span class="tag-chip" style="background:${tagColor(t)}">${escapeHtml(capitalize(t))}</span>`).join("")}</div>`,
-      ]);
-    }
+
     if (item.kind === "CHECKLIST" && item.items && item.items.length) {
-      rows.push([this._t("detailChecklist"), this._renderSubtaskList(item)]);
+      sections.push(`<div class="detail-section">${this._renderSubtaskList(item)}</div>`);
     }
+
+    const tagsRow = this._renderDetailTagsRow(item);
+    if (tagsRow) {
+      sections.push(`<div class="detail-section"><div class="detail-label">${this._t("detailTags")}</div>${tagsRow}</div>`);
+    }
+
+    const facts = [];
+    if (item.due_date) facts.push([this._t("detailDue"), escapeHtml(formatDueDate(item.due_date, lang))]);
+    if (item.start_date) facts.push([this._t("detailStart"), escapeHtml(formatDate(item.start_date, lang))]);
+    facts.push([this._t("sortPriority"), escapeHtml(this._t(PRIORITY_LABEL_KEYS[item.priority || "NONE"]))]);
+    if (!isNoteItem(item, projectKind)) {
+      facts.push([this._t("detailStatus"), status === "completed" ? this._t("statusCompleted") : this._t("statusOpen")]);
+    }
+    sections.push(
+      `<div class="detail-facts">${facts
+        .map(([label, value]) => `<div class="detail-fact"><span class="detail-fact-label">${label}</span><span>${value}</span></div>`)
+        .join("")}</div>`
+    );
 
     return `<div class="detail-overlay">
       <div class="detail-card">
@@ -1182,10 +1197,65 @@ class TickTickListCard extends HTMLElement {
           <button class="icon-btn detail-close" title="${escapeHtml(this._t("close"))}"><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
         <div class="detail-body">
-          ${rows.map(([label, value]) => `<div class="detail-row"><div class="detail-label">${label}</div><div>${value}</div></div>`).join("")}
+          ${sections.join("")}
         </div>
       </div>
     </div>`;
+  }
+
+  // Every tag already used anywhere in this list is offered as a toggle -
+  // "existing" tags only, per the feature's scope (no free-text new-tag
+  // entry here). Reuses the exact same .chip/--chip-color styling as the
+  // sort/filter popup's chips (same touch-target size, same active-state
+  // recipe) rather than a bespoke smaller style, so both popups' tappable
+  // chips feel identical. Filled = already on this item (click removes),
+  // outlined = not on it yet (click adds). Returns null (no row at all)
+  // when there's nothing to offer, i.e. this item and the rest of the list
+  // are both entirely untagged.
+  _renderDetailTagsRow(item) {
+    const itemTags = new Set(item.tags || []);
+    const allTags = new Set(itemTags);
+    for (const other of this._entityItems()) {
+      (other.tags || []).forEach((t) => allTags.add(t));
+    }
+    if (!allTags.size) return null;
+    return `<div class="tag-row">${[...allTags]
+      .sort((a, b) => a.localeCompare(b))
+      .map((t) => {
+        const active = itemTags.has(t);
+        return `<button type="button" class="chip ${active ? "active" : ""}" style="--chip-color:${tagColor(t)}" data-tag-toggle="${escapeHtml(t)}" title="${escapeHtml(active ? this._t("removeTag") : this._t("addTag"))}">${escapeHtml(capitalize(t))}</button>`;
+      })
+      .join("")}</div>`;
+  }
+
+  // Fires the update_task service immediately (no delay/undo window like
+  // _toggleComplete's - tags aren't subject to the same "avoid reporting a
+  // mis-click" concern task completion has). item is the actual object
+  // from _entityItems() (a live reference into the entity's own state
+  // attributes, not a copy), so mutating item.tags here also updates the
+  // tag squares on this item's row in the main list immediately, not just
+  // the open detail dialog - reverted the same way if the service call
+  // fails.
+  _toggleItemTag(item, tag) {
+    const previousTags = item.tags || [];
+    const newTags = previousTags.includes(tag)
+      ? previousTags.filter((t) => t !== tag)
+      : [...previousTags, tag];
+    item.tags = newTags;
+    this._render();
+    const stateObj = this._stateObj();
+    const projectId = stateObj?.attributes?.project_id;
+    this._hass
+      .callService("ticktick", "update_task", {
+        projectId,
+        taskId: item.id,
+        tags: newTags,
+      })
+      .catch((err) => {
+        item.tags = previousTags;
+        this._render();
+        console.error("ticktick-list-card: failed to update tags", err);
+      });
   }
 
   _renderSubtaskList(item) {
@@ -1749,13 +1819,10 @@ class TickTickListCard extends HTMLElement {
         margin-left: 8px;
       }
       .due.overdue { color: var(--error-color, #db4437); }
-      .tag-row { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
-      .tag-chip {
-        color: #fff;
-        border-radius: 10px;
-        padding: 1px 8px;
-        font-size: 0.78em;
-      }
+      /* Same gap as .filter-chip-row - this reuses .chip/.chip.active
+         itself too (see _renderDetailTagsRow()), so both popups' chip
+         rows end up pixel-identical, not just similarly sized. */
+      .tag-row { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; }
       .empty, .warning { padding: 16px; color: var(--secondary-text-color); }
       .detail-overlay {
         position: fixed;
@@ -1777,7 +1844,17 @@ class TickTickListCard extends HTMLElement {
         box-sizing: border-box;
       }
       .detail-card {
-        background: var(--card-background-color, #fff);
+        /* The real ha-dialog surface token (verified against the actual
+           frontend bundle: background:var(--ha-dialog-surface-background,
+           var(--mdc-theme-surface,#fff)) is what every native HA dialog's
+           own panel uses) rather than --card-background-color - a theme
+           that gives dialogs a different surface tone than cards (some
+           dark themes do) now renders this the same way it renders every
+           other HA dialog, not like a card. */
+        background: var(--ha-dialog-surface-background, var(--mdc-theme-surface, #fff));
+        /* Also real (default "none", themeable) - mirrors the scrim's own
+           backdrop-filter var below for the same reason. */
+        backdrop-filter: var(--ha-dialog-surface-backdrop-filter, none);
         color: var(--primary-text-color);
         /* This overlay is a genuine modal dialog, not card chrome - so it
            mirrors ha-dialog's own radius chain (verified against the real
@@ -1791,29 +1868,44 @@ class TickTickListCard extends HTMLElement {
         width: 100%;
         max-height: 80vh;
         overflow-y: auto;
-        /* Same reasoning as .menu-popup's box-shadow above: --ha-card-box-
-           shadow's real default is "none", so the fallback here is our own
-           elevation shadow, not the token's actual default - kept
-           identical to .menu-popup's fallback so the two overlays read as
-           part of the same visual language. */
-        box-shadow: var(--ha-card-box-shadow, 0 4px 16px rgba(0, 0, 0, 0.35));
+        /* --dialog-box-shadow is the real dialog elevation token (falls
+           back through --ha-card-box-shadow, matching .menu-popup's own
+           fallback, before finally landing on our own elevation shadow -
+           --ha-card-box-shadow's real default is "none", so that middle
+           fallback alone would be invisible on an unthemed instance). */
+        box-shadow: var(--dialog-box-shadow, var(--ha-card-box-shadow, 0 4px 16px rgba(0, 0, 0, 0.35)));
       }
       .detail-header {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
         gap: 8px;
-        padding: 16px 16px 8px 16px;
+        padding: 16px 16px 12px 16px;
         position: sticky;
         top: 0;
         background: inherit;
         border-radius: var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px))
           var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px)) 0 0;
       }
-      .detail-title { font-size: 1.15em; font-weight: 500; word-break: break-word; }
-      .detail-body { padding: 0 16px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
-      .detail-row { font-size: 0.95em; }
+      /* Real dialogs color their header title via this dedicated token
+         (verified against the frontend bundle) rather than the body's
+         --primary-text-color directly, even though both default to the
+         same value - a theme can then restyle just the header title. */
+      .detail-title {
+        font-size: 1.15em;
+        font-weight: 500;
+        word-break: break-word;
+        color: var(--ha-dialog-header-title-color, var(--primary-text-color));
+      }
+      .detail-body { padding: 12px 16px 16px 16px; display: flex; flex-direction: column; gap: 18px; }
+      .detail-section { font-size: 0.95em; }
       .detail-label { color: var(--secondary-text-color); font-size: 0.8em; margin-bottom: 2px; }
+      /* The short due/start/priority/status facts as one wrapping row of
+         inline "label value" pairs instead of a full-width block each -
+         far less vertical space than the old one-row-per-fact layout. */
+      .detail-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 0.85em; }
+      .detail-fact { display: flex; align-items: baseline; gap: 4px; }
+      .detail-fact-label { color: var(--secondary-text-color); }
       .subtask-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
       .subtask-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
       .subtask-title { color: var(--primary-text-color); word-break: break-word; }
