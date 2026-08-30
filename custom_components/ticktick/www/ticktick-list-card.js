@@ -808,23 +808,52 @@ class TickTickListCard extends HTMLElement {
         }));
       }
 
+      // An item with several tags is grouped under whichever of its own
+      // tags currently ranks highest (topmost) in the user's tag order,
+      // not whichever sorts first alphabetically - dragging a tag to the
+      // top should actually pull every item that carries it into that
+      // heading, rather than alphabetical order silently overriding the
+      // drag. That needs the full resolved order (every tag actually in
+      // use - drag order, plus anything not yet placed appended
+      // alphabetically, see applyTagOrder) computed up front, before
+      // grouping, rather than derived from the groups afterward.
+      const allTags = new Set();
+      for (const item of items) {
+        (item.tags || []).forEach((t) => allTags.add(t));
+      }
+      const orderedTags = applyTagOrder(this._tagOrder, [...allTags]);
+      const rankOf = new Map(orderedTags.map((tag, i) => [tag, i]));
+
       const groups = new Map();
       for (const item of items) {
-        const tag = firstTag(item) || NO_TAG_KEY;
+        const itemTags = item.tags || [];
+        const tag = itemTags.length
+          ? itemTags.reduce((best, t) => (rankOf.get(t) < rankOf.get(best) ? t : best))
+          : NO_TAG_KEY;
         if (!groups.has(tag)) groups.set(tag, []);
         groups.get(tag).push(item);
       }
-      // Real tags follow the user's drag-and-drop order (falling back to
-      // alphabetical for anything not yet placed there); "No tag" always
-      // stays pinned last and is never part of that stored order.
-      const realTags = [...groups.keys()].filter((tag) => tag !== NO_TAG_KEY);
-      const orderedTags = applyTagOrder(this._tagOrder, realTags);
-      const orderedKeys = groups.has(NO_TAG_KEY) ? [...orderedTags, NO_TAG_KEY] : orderedTags;
+      // Only tags that actually ended up as some item's top-ranked tag get
+      // their own heading here - a tag that's always outranked by a
+      // co-tag on every item carrying it never becomes a group of its
+      // own, so an empty heading for it would be pointless. "No tag"
+      // always stays pinned last.
+      const usedOrderedTags = orderedTags.filter((tag) => groups.has(tag));
+      const orderedKeys = groups.has(NO_TAG_KEY) ? [...usedOrderedTags, NO_TAG_KEY] : usedOrderedTags;
       return orderedKeys.map((tag) => ({
         label: tag === NO_TAG_KEY ? this._t("noTag") : capitalize(tag),
         key: tag,
         color: tag === NO_TAG_KEY ? null : tagColor(tag),
-        items: groups.get(tag).slice().sort(secondaryCmp),
+        // Items carrying more than one tag surface at the top of their
+        // group - a quick visual cue that an item also lives under other
+        // headings - with the existing secondary sort only breaking ties
+        // within that (mirrors the same clustering compareBy("tag")
+        // already does when tag is used as a secondary/tie-break key).
+        items: groups.get(tag).slice().sort((a, b) => {
+          const aMulti = (a.tags?.length || 0) > 1 ? 0 : 1;
+          const bMulti = (b.tags?.length || 0) > 1 ? 0 : 1;
+          return aMulti !== bMulti ? aMulti - bMulti : secondaryCmp(a, b);
+        }),
       }));
     }
 
