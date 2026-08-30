@@ -18,7 +18,10 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Hantick/ticktick-home-assistant/issues",
-  "requirements": [],
+  "requirements": [
+    "readability-lxml==0.9",
+    "chardet==5.2.0"
+  ],
   "ssdp": [],
   "version": "2.1.4",
   "zeroconf": []

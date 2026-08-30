@@ -92,8 +92,12 @@ const STRINGS = {
     detailTags: "Etiketten",
     addTag: "Etikett hinzufügen",
     removeTag: "Etikett entfernen",
+    openInNewTab: "In neuem Tab öffnen",
+    linkPreviewLoading: "Vorschau wird geladen …",
+    linkPreviewUnavailable: "Vorschau nicht verfügbar. Bitte in neuem Tab öffnen.",
     editorEntity: "Entität",
     editorTitle: "Titel (optional)",
+    editorTouchOptimized: "Touch-Optimierung",
     cardDescription: "Zeigt eine TickTick-Liste (Aufgaben oder Notizen) im Stil der TickTick-App an.",
   },
   en: {
@@ -140,8 +144,12 @@ const STRINGS = {
     detailTags: "Tags",
     addTag: "Add tag",
     removeTag: "Remove tag",
+    openInNewTab: "Open in new tab",
+    linkPreviewLoading: "Loading preview …",
+    linkPreviewUnavailable: "Preview unavailable. Please open in a new tab.",
     editorEntity: "Entity",
     editorTitle: "Title (optional)",
+    editorTouchOptimized: "Touch optimization",
     cardDescription: "Shows a TickTick list (tasks or notes) styled like the TickTick app.",
   },
 };
@@ -252,6 +260,11 @@ const CHECK_ICON =
 // already-irreversible completion afterward.
 const COMPLETION_REPORT_DELAY_MS = 60000;
 
+// Backend endpoint (registered by TickTickLinkPreviewView in __init__.py)
+// that decides, server-side, whether a link clicked in the detail dialog
+// can be framed live or needs a reader-mode fallback - see _openLinkPreview.
+const LINK_PREVIEW_URL = "/ticktick_files/link_preview";
+
 function escapeHtml(value) {
   // Escapes quotes too (not just <, >, &) since this is used both in text
   // content and inside double-quoted HTML attributes built via template
@@ -264,16 +277,28 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function linkify(escapedText) {
+function linkify(escapedText, asLinks = true) {
+  // No inline onclick="event.stopPropagation()" here (there used to be) -
+  // that would stop a link click from ever reaching the delegated
+  // shadowRoot click listener at all, which is exactly where _onClick()
+  // now needs to see it (to intercept a click inside the open detail
+  // dialog into a link preview, and to stop it from also opening/fighting
+  // with a row's own click-opens-detail behavior elsewhere).
+  //
+  // asLinks:false (Touch-Optimierung, see setConfig/_renderRow) skips
+  // wrapping URLs as <a> entirely - row/list previews then show plain
+  // text instead of small, easy-to-mis-tap inline links competing with
+  // the row's own much bigger "tap anywhere to open" target.
+  if (!asLinks) return escapedText;
   return escapedText.replace(
     /(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">$1</a>'
+    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
   );
 }
 
 const MARKDOWN_LINK_RE = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
 
-function renderText(value) {
+function renderText(value, { linkify: asLinks = true } = {}) {
   // TickTick descriptions/titles can carry markdown-style links, e.g.
   // "[How to share a list](https://...)" - shown as-is those brackets
   // and the raw URL would just be noise, so they're rendered as a plain
@@ -286,11 +311,13 @@ function renderText(value) {
   let match;
   while ((match = MARKDOWN_LINK_RE.exec(raw))) {
     const [full, label, url] = match;
-    result += linkify(escapeHtml(raw.slice(lastIndex, match.index)));
-    result += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapeHtml(label)}</a>`;
+    result += linkify(escapeHtml(raw.slice(lastIndex, match.index)), asLinks);
+    result += asLinks
+      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+      : escapeHtml(label);
     lastIndex = match.index + full.length;
   }
-  result += linkify(escapeHtml(raw.slice(lastIndex)));
+  result += linkify(escapeHtml(raw.slice(lastIndex)), asLinks);
   return result;
 }
 
@@ -555,6 +582,9 @@ class TickTickListCard extends HTMLElement {
     this._menuOpen = false;
     this._menuField = null; // null = root menu, else "group" | "sort" | "order" | "filter"
     this._detailItem = null;
+    // { url, mode: "loading"|"iframe"|"reader"|"error", title?, html?, message? } -
+    // set while a link clicked inside the detail dialog is being previewed.
+    this._linkPreview = null;
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
   }
 
@@ -593,7 +623,17 @@ class TickTickListCard extends HTMLElement {
     // (drag-and-drop reordering, see the Sortable usage in _render()) - no
     // YAML fallback, same reasoning as the other live-choice fields above.
     this._tagOrder = Array.isArray(stored.tagOrder) ? stored.tagOrder : [];
+    // A card-level setting (visual editor toggle, not a localStorage live
+    // preference like the sort/filter state above) rather than a per-
+    // session choice, since it changes how the card behaves structurally,
+    // not just how it's currently sorted/filtered - defaults to off (the
+    // original link behavior) so nothing changes for an existing card
+    // until someone deliberately turns it on. See _onClick's link
+    // handling and _renderRow's renderText() calls for what it actually
+    // does.
+    this._touchOptimized = cfg.touch_optimized === true;
     this._detailItem = null;
+    this._linkPreview = null;
     // setConfig can land after hass already has (e.g. the visual editor's
     // live preview re-configuring an already-hass'd card element in place,
     // or config changing without a fresh custom-element instance) - the
@@ -810,9 +850,20 @@ class TickTickListCard extends HTMLElement {
     }
 
     // Close on the explicit close button, or a click landing directly on
-    // the backdrop itself (not bubbled from inside .detail-card).
+    // the backdrop itself (not bubbled from inside .detail-card). Any open
+    // link preview is a child of this same dialog conceptually, so it goes
+    // away with it too rather than lingering with nothing to belong to.
     if (ev.target.closest(".detail-close") || ev.target.classList?.contains("detail-overlay")) {
       this._detailItem = null;
+      this._linkPreview = null;
+      this._render();
+      return;
+    }
+    // Same idea, one level up: its own close button or its own backdrop
+    // closes only the link preview, leaving the detail dialog underneath
+    // open.
+    if (ev.target.closest(".link-preview-close") || ev.target.classList?.contains("link-preview-overlay")) {
+      this._linkPreview = null;
       this._render();
       return;
     }
@@ -839,6 +890,24 @@ class TickTickListCard extends HTMLElement {
       const items = this._entityItems();
       const item = items.find((i) => i.id === id);
       if (item) this._toggleComplete(item);
+      return;
+    }
+    // Links rendered by renderText()/linkify() (task/note content, markdown
+    // links) - only intercepted inside the open detail dialog, where a big
+    // near-fullscreen preview makes sense; a link inside a row's own
+    // content-line preview keeps its plain target="_blank" behavior
+    // unchanged. Returning either way (not falling through to the .row
+    // branch below) is what keeps clicking a link from also opening/
+    // fighting with the row's own click-opens-detail behavior - previously
+    // handled by an inline onclick="event.stopPropagation()" on every
+    // link, which would have blocked this interception from ever seeing
+    // the click at all, so that's gone from renderText()/linkify() now.
+    const link = ev.target.closest("a[href]");
+    if (link) {
+      if (this._touchOptimized && link.closest(".detail-card")) {
+        ev.preventDefault();
+        this._openLinkPreview(link.href);
+      }
       return;
     }
     const row = ev.target.closest(".row");
@@ -1107,16 +1176,22 @@ class TickTickListCard extends HTMLElement {
         : item.tags
       : [];
     const hasContentLine = Boolean(item.content) || visibleTags.length > 0;
+    // Touch-Optimierung (see setConfig): row/list previews get plain,
+    // non-clickable text instead of small inline links - only the detail
+    // dialog's own renderText() calls (unaffected by this) stay linked,
+    // since those are what Touch-Optimierung's other half (the big link
+    // preview view) actually needs to be clickable at all.
+    const rowLinkify = { linkify: !this._touchOptimized };
 
     if (isNoteItem(item, projectKind)) {
       return `<div class="row note-row" data-id="${escapeHtml(item.id)}">
         <div class="note-checkbox priority-${priority}" title="${escapeHtml(this._t("note"))}"><svg viewBox="0 0 16 16"><text x="50%" y="52%" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-weight="700">N</text></svg></div>
         <div class="row-main">
-          <div class="row-title">${renderText(item.title)}</div>
+          <div class="row-title">${renderText(item.title, rowLinkify)}</div>
           ${
             hasContentLine
               ? `<div class="content-line">
-            ${item.content ? `<div class="row-content clamp">${renderText(item.content)}</div>` : ""}
+            ${item.content ? `<div class="row-content clamp">${renderText(item.content, rowLinkify)}</div>` : ""}
             ${renderTagSquares(visibleTags)}
           </div>`
               : ""
@@ -1137,11 +1212,11 @@ class TickTickListCard extends HTMLElement {
             ? `<div class="due ${isOverdue ? "overdue" : ""}">${formatDueLabel(item.due_date, new Date(), this._hass?.locale?.language)}</div>`
             : ""
         }
-        <div class="row-title">${renderText(item.title)}</div>
+        <div class="row-title">${renderText(item.title, rowLinkify)}</div>
         ${
           hasContentLine
             ? `<div class="content-line">
-          ${item.content ? `<div class="row-content clamp">${renderText(item.content)}</div>` : ""}
+          ${item.content ? `<div class="row-content clamp">${renderText(item.content, rowLinkify)}</div>` : ""}
           ${renderTagSquares(visibleTags)}
         </div>`
             : ""
@@ -1199,6 +1274,81 @@ class TickTickListCard extends HTMLElement {
         <div class="detail-body">
           ${sections.join("")}
         </div>
+      </div>
+    </div>`;
+  }
+
+  // Kicks off a link preview: shows a loading state immediately (open
+  // TickTickLinkPreviewView's own docstring for why this asks the backend
+  // first instead of just framing the URL directly), then asks the backend
+  // whether the target page can actually be framed live or needs the
+  // reader-mode fallback it already extracted server-side if not.
+  _openLinkPreview(url) {
+    this._linkPreview = { url, mode: "loading" };
+    this._render();
+    this._hass
+      .fetchWithAuth(
+        `${LINK_PREVIEW_URL}?url=${encodeURIComponent(url)}&lang=${encodeURIComponent(this._hass?.locale?.language || "en")}`
+      )
+      .then((resp) => resp.json())
+      .then((data) => {
+        // The user may have closed this preview, or clicked a different
+        // link, while the request was in flight - a stale response
+        // landing after that shouldn't resurrect/overwrite whatever's
+        // showing now.
+        if (this._linkPreview?.url !== url) return;
+        this._linkPreview = { url, ...data };
+        this._render();
+      })
+      .catch((err) => {
+        if (this._linkPreview?.url !== url) return;
+        this._linkPreview = { url, mode: "error" };
+        this._render();
+        console.error("ticktick-list-card: link preview request failed", err);
+      });
+  }
+
+  // A near-fullscreen preview for a link clicked inside the open detail
+  // dialog (see the "a[href]" branch in _onClick()), stacked above
+  // .detail-overlay (higher z-index) so the detail dialog stays open
+  // underneath it. The header (URL, "open in new tab", close) is the same
+  // across every mode; only the body differs:
+  // - loading: request to the backend (see _openLinkPreview) still in flight.
+  // - iframe: the backend found no framing restriction, so this is the
+  //   live page, same as before this got a backend round-trip at all.
+  // - reader: the backend found the page blocks framing (X-Frame-Options/
+  //   CSP frame-ancestors) and extracted+sanitized its readable content
+  //   server-side instead (see link_preview.py) - shown as plain styled
+  //   HTML here, already safe to inject directly.
+  // - error: the backend couldn't fetch or extract anything usable (blocked
+  //   URL, non-HTML response, network failure, ...) - "open in new tab" in
+  //   the header above is the only way forward at that point, same as it
+  //   always was for a page that simply can't be shown in-page at all.
+  _renderLinkPreview() {
+    const preview = this._linkPreview;
+    if (!preview) return "";
+    const { url, mode } = preview;
+    let body;
+    if (mode === "iframe") {
+      body = `<iframe class="link-preview-frame" src="${escapeHtml(url)}" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>`;
+    } else if (mode === "reader") {
+      body = `<div class="link-reader">
+        ${preview.title ? `<div class="link-reader-title">${escapeHtml(preview.title)}</div>` : ""}
+        <div class="link-reader-content">${preview.html || ""}</div>
+      </div>`;
+    } else if (mode === "error") {
+      body = `<div class="link-preview-message">${escapeHtml(this._t("linkPreviewUnavailable"))}</div>`;
+    } else {
+      body = `<div class="link-preview-message">${escapeHtml(this._t("linkPreviewLoading"))}</div>`;
+    }
+    return `<div class="link-preview-overlay">
+      <div class="link-preview-card">
+        <div class="link-preview-header">
+          <div class="link-preview-url">${escapeHtml(url)}</div>
+          <a class="icon-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(this._t("openInNewTab"))}"><ha-icon icon="mdi:open-in-new"></ha-icon></a>
+          <button class="icon-btn link-preview-close" title="${escapeHtml(this._t("close"))}"><ha-icon icon="mdi:close"></ha-icon></button>
+        </div>
+        ${body}
       </div>
     </div>`;
   }
@@ -1352,7 +1502,15 @@ class TickTickListCard extends HTMLElement {
         <div class="list-body">
           ${visible.length ? body : `<div class="empty">${this._t("noEntries")}</div>`}
         </div>`;
-    this._detailSlot.innerHTML = this._renderDetail(projectKind);
+    this._detailSlot.innerHTML = this._renderDetail(projectKind) + this._renderLinkPreview();
+    // Enlarges checkbox tap targets (see the .touch-optimized rules in
+    // _styles()) without resizing anything visibly - toggled on these two
+    // persistent containers (not rebuilt every render, unlike their
+    // contents) rather than baked into the row/subtask markup itself, so
+    // it stays in sync with the live setting with no extra plumbing
+    // through _renderRow()/_renderSubtaskList().
+    this._cardEl.classList.toggle("touch-optimized", this._touchOptimized);
+    this._detailSlot.classList.toggle("touch-optimized", this._touchOptimized);
     this._setupTagDrag();
   }
 
@@ -1466,6 +1624,11 @@ class TickTickListCard extends HTMLElement {
         padding: 6px;
         border-radius: 6px;
         display: flex;
+        /* Only ever wraps an <ha-icon> (no visible text), but this class is
+           also used on a plain <a> now (the link preview's "open in new
+           tab" action) - a default link underline/color would otherwise
+           flash under the icon on some browsers/themes. */
+        text-decoration: none;
       }
       .icon-btn:hover { background: var(--divider-color); }
       #menu-toggle {
@@ -1768,8 +1931,25 @@ class TickTickListCard extends HTMLElement {
         align-items: center;
         justify-content: center;
       }
-      .checkbox { cursor: pointer; }
+      .checkbox { cursor: pointer; position: relative; }
       .note-checkbox { cursor: default; }
+      /* Touch-Optimierung (see setConfig/_render): the checkbox itself
+         stays exactly 1em (its normal visual size) - only its tappable
+         area grows, via an invisible ::before extending past the box on
+         every side. A generated pseudo-element isn't independently
+         click-targetable, so a tap anywhere in that extended zone still
+         resolves to ev.target being the real .checkbox button in
+         _onClick(), no JS changes needed beyond the class toggle. Applies
+         to both the row list (.checkbox) and the detail dialog's
+         checklist (.subtask-checkbox carries the same base class) - kept
+         modest rather than maximal so it doesn't eat into the row's own
+         much larger "tap anywhere else to open detail" area right next
+         to it. */
+      .touch-optimized .checkbox::before {
+        content: "";
+        position: absolute;
+        inset: -10px;
+      }
       .note-checkbox svg {
         width: 62%;
         height: 62%;
@@ -1910,6 +2090,94 @@ class TickTickListCard extends HTMLElement {
       .subtask-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
       .subtask-title { color: var(--primary-text-color); word-break: break-word; }
       .subtask-title.completed { text-decoration: line-through; color: var(--secondary-text-color); }
+      /* Stacked above .detail-overlay (z-index 100) so the detail dialog
+         stays visible/open underneath while a link preview is up - same
+         scrim recipe as .detail-overlay, just a taller z-index. */
+      .link-preview-overlay {
+        position: fixed;
+        inset: 0;
+        background-color: var(--mdc-dialog-scrim-color, transparent);
+        backdrop-filter: var(--ha-dialog-scrim-backdrop-filter, brightness(68%));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 150;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      /* Near-fullscreen by design (per the "large window, almost
+         fullscreen" request) rather than .detail-card's own fixed
+         max-width, but otherwise the same real dialog tokens. */
+      .link-preview-card {
+        background: var(--ha-dialog-surface-background, var(--mdc-theme-surface, #fff));
+        border-radius: var(--ha-dialog-border-radius, var(--ha-border-radius-2xl, 20px));
+        box-shadow: var(--dialog-box-shadow, var(--ha-card-box-shadow, 0 4px 16px rgba(0, 0, 0, 0.35)));
+        width: 95vw;
+        height: 92vh;
+        max-width: 1400px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .link-preview-header {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 8px 8px 14px;
+        border-bottom: 1px solid var(--divider-color);
+        flex-shrink: 0;
+      }
+      .link-preview-url {
+        flex: 1;
+        min-width: 0;
+        color: var(--secondary-text-color);
+        font-size: 0.85em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .link-preview-frame { flex: 1; min-height: 0; border: none; width: 100%; }
+      .link-preview-message {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--secondary-text-color);
+        text-align: center;
+        padding: 32px;
+      }
+      .link-reader {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      .link-reader-title { font-size: 1.4em; font-weight: 600; margin-bottom: 12px; }
+      /* Server-extracted/sanitized article content (see link_preview.py) -
+         it arrives stripped of the source site's own classes/styles, so
+         its typography is entirely ours here rather than inherited. */
+      .link-reader-content {
+        max-width: 720px;
+        margin: 0 auto;
+        line-height: 1.6;
+      }
+      .link-reader-content :is(h1, h2, h3, h4, h5, h6) { margin: 1.2em 0 0.5em; line-height: 1.3; }
+      .link-reader-content p { margin: 0 0 1em; }
+      .link-reader-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.5em 0; }
+      .link-reader-content a { color: var(--primary-color); }
+      .link-reader-content :is(ul, ol) { padding-left: 1.4em; margin: 0 0 1em; }
+      .link-reader-content blockquote {
+        margin: 0 0 1em;
+        padding-left: 12px;
+        border-left: 3px solid var(--divider-color);
+        color: var(--secondary-text-color);
+      }
+      /* The generic (non-Recipe-JSON-LD) extraction path can carry over a
+         source page's own <table> as-is (e.g. an ingredient list) with no
+         styling of its own otherwise. */
+      .link-reader-content table { width: 100%; border-collapse: collapse; margin: 0 0 1em; }
+      .link-reader-content td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--divider-color); }
     </style>`;
   }
 }
@@ -1937,6 +2205,7 @@ class TickTickListCardEditor extends HTMLElement {
     return [
       { name: "entity", selector: { entity: { domain: "sensor", integration: "ticktick" } } },
       { name: "title", selector: { text: {} } },
+      { name: "touch_optimized", selector: { boolean: {} } },
     ];
   }
 
@@ -1944,6 +2213,7 @@ class TickTickListCardEditor extends HTMLElement {
     return {
       entity: this._t("editorEntity"),
       title: this._t("editorTitle"),
+      touch_optimized: this._t("editorTouchOptimized"),
     };
   }
 
@@ -1961,7 +2231,11 @@ class TickTickListCardEditor extends HTMLElement {
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.data = this._config || {};
+    // touch_optimized defaults to off (see TickTickListCard.setConfig)
+    // when absent from config entirely - spelled out here too so the
+    // toggle itself reflects that default instead of showing on/checked
+    // for every card that simply hasn't touched this setting yet.
+    this._form.data = { touch_optimized: false, ...this._config };
     this._form.schema = this._schema();
     this._form.computeLabel = (schemaItem) => this._labels()[schemaItem.name] || schemaItem.name;
   }

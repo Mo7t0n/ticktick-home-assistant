@@ -24,6 +24,7 @@ from homeassistant.helpers import aiohttp_client
 from . import api
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MINUTES, DOMAIN
 from .coordinator import TickTickCoordinator
+from .link_preview import TickTickLinkPreviewView
 from .service_handlers import (
     handle_complete_subtask,
     handle_complete_task,
@@ -166,6 +167,10 @@ async def register_frontend_card(hass: HomeAssistant) -> None:
     # URL - the static resource still covers everything else in www/
     # (e.g. the README screenshot), just not this one file anymore.
     hass.http.register_view(TickTickCardView(card_js_path))
+    # Backs the card's link-preview popup (see link_preview.py's own
+    # docstring) - registered here alongside the card's own view since both
+    # are frontend-support endpoints under the same /ticktick_files prefix.
+    hass.http.register_view(TickTickLinkPreviewView(hass))
 
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL_PATH, str(www_path), cache_headers=False)]
