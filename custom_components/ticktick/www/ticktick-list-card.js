@@ -1127,6 +1127,11 @@ class TickTickListCard extends HTMLElement {
     return `<div class="row task-row ${completed ? "completed" : ""}" data-id="${escapeHtml(item.id)}">
       <button class="checkbox priority-${priority} ${completed ? "checked" : ""}" data-id="${escapeHtml(item.id)}" title="${escapeHtml(this._localCompleted.has(item.id) ? this._t("reopen") : this._t("markComplete"))}">${completed ? CHECK_ICON : hasChecklist ? '<span class="checklist-lines"><span></span><span></span></span>' : ""}</button>
       <div class="row-main">
+        ${
+          item.due_date
+            ? `<div class="due ${isOverdue ? "overdue" : ""}">${formatDueLabel(item.due_date, new Date(), this._hass?.locale?.language)}</div>`
+            : ""
+        }
         <div class="row-title">${renderText(item.title)}</div>
         ${
           hasContentLine
@@ -1137,11 +1142,6 @@ class TickTickListCard extends HTMLElement {
             : ""
         }
       </div>
-      ${
-        item.due_date
-          ? `<div class="due ${isOverdue ? "overdue" : ""}">${formatDueLabel(item.due_date, new Date(), this._hass?.locale?.language)}</div>`
-          : ""
-      }
     </div>`;
   }
 
@@ -1642,6 +1642,17 @@ class TickTickListCard extends HTMLElement {
         padding-bottom: 8px;
         border-bottom: 1px solid var(--divider-color);
       }
+      /* Standard clearfix: without this, a row whose title is short enough
+         to fit entirely beside the floated .due badge (and has no
+         content-line below to clear it, e.g. no description/tags) would
+         let that float poke out past row-main's own bottom edge instead of
+         being counted in its height - this keeps the divider line below
+         always landing right after the taller of the two. */
+      .row-main::after {
+        content: "";
+        display: block;
+        clear: both;
+      }
       .row:last-child .row-main { border-bottom: none; }
       /* The hover overlay above already paints over the line ABOVE this
          row (it extends 1px past its own top edge for exactly that). This
@@ -1664,7 +1675,10 @@ class TickTickListCard extends HTMLElement {
         text-decoration: none;
       }
       .task-row.completed .row-title { text-decoration: line-through; color: var(--secondary-text-color); }
-      .content-line { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 2px; }
+      /* clear:both keeps this always full-width below the floated .due
+         badge (see .due above) - only the title above it wraps around that
+         corner badge, the description/tags line never does. */
+      .content-line { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 2px; clear: both; }
       .content-line .row-content { margin-top: 0; flex: 1; min-width: 0; }
       .tag-squares { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
       .tag-square { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
@@ -1723,9 +1737,16 @@ class TickTickListCard extends HTMLElement {
         font-size: 0.82em;
         color: var(--secondary-text-color);
         white-space: nowrap;
-        position: absolute;
-        top: 8px;
-        right: 16px;
+        /* Floated (not absolutely positioned, not a flex sibling) and
+           placed as row-main's first child, right before .row-title below
+           - a float only pulls the inline text that follows it in the same
+           block formatting context around itself, so only the title wraps
+           around this corner badge. It deliberately does NOT shrink
+           row-main's own box (the content-line/border-bottom below stay
+           full width - see content-line's clear:both), unlike flex-basis
+           siblings or a reserved padding would. */
+        float: right;
+        margin-left: 8px;
       }
       .due.overdue { color: var(--error-color, #db4437); }
       .tag-row { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
