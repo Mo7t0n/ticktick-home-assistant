@@ -82,11 +82,29 @@ class Task(CheckListItem):
         """Serialize Task to json."""
 
         def filter_none(d):
-            """Filter out None values from dictionary."""
+            """Filter out None values from dictionary.
+
+            Deliberately keeps empty lists (unlike an earlier version of
+            this, which also dropped `v == []`): update_task's caller
+            (handle_update_task) builds `task` by fetching the task's
+            current full state and then patching just the requested
+            fields onto it, so every field - including a list field the
+            caller explicitly wants cleared, e.g. tags:[] to remove the
+            last tag from a task - is always meant to be sent, never
+            "leave this one alone by omitting it". Dropping empty lists
+            here meant clearing a list field down to empty silently never
+            reached TickTick at all: the field was missing from the JSON
+            entirely, so TickTick kept whatever tags/reminders/items the
+            task already had instead of clearing them - reported as tag
+            removal "not syncing". Also harmless for create_task, whose
+            list fields already default to [] rather than None when not
+            supplied, so there was never a real "explicitly empty vs. not
+            supplied" distinction to preserve there either.
+            """
             return {
                 k: _handle_datetime(v)
                 for k, v in d.items()
-                if v is not None and v != []
+                if v is not None
             }
 
         @staticmethod
