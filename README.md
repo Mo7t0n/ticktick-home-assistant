@@ -15,7 +15,7 @@ This is a fork of [Hantick/ticktick-home-assistant](https://github.com/Hantick/t
 ## Features
 
 - **Lists as sensors** — every TickTick list (task or note) gets a `sensor` entity with the item count as state and the full list content (title, due date, priority, tags, checklist items, ...) as the `items` attribute, usable in templates/automations.
-- **Dashboard card** — bundled `ticktick-list-card` Lovelace card that renders a list like the TickTick app, with due-date grouping, sorting, filtering, and checklist support.
+- **Dashboard card** — bundled `ticktick-list-card` Lovelace card that renders a list like the TickTick app.
 
   ![Dashboard card](custom_components/ticktick/www/dashboard-card.png)
 
@@ -24,9 +24,13 @@ This is a fork of [Hantick/ticktick-home-assistant](https://github.com/Hantick/t
   entity: sensor.__name__
   ```
 
+  - Sorting (due date, priority, start date, title, or tag) and filtering (priority, tag, due date), remembered per list.
+  - Grouping by due-date bucket or by tag, with drag-and-drop reordering of tag group headings.
+  - Checklist support, including completing individual sub-items.
+  - A detail popup per item showing its content, checklist, tags (addable/removable right there), and other properties.
+  - Links in the detail popup open a near-fullscreen preview — live, or an automatically extracted reader view (with recipe ingredients/instructions where available) for pages that block embedding.
+  - A touch-optimization option for kiosk/tablet dashboards: larger checkbox tap targets and non-clickable row-preview links.
+  - Matches automaticly your Home Assistant theme.
+
 - **Configurable sync interval** — polls TickTick once a minute by default; adjustable under Settings → Devices & services → TickTick → **Configure**.
 
-## Exposed Services
-
-- **Task**: Get, Create, Update, Delete, Complete Task, Complete Checklist Item (sub-task)
-- **Project**: Get (Create, Update, Delete not yet supported)
