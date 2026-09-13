@@ -30,7 +30,6 @@ This is a fork of [Hantick/ticktick-home-assistant](https://github.com/Hantick/t
   - A detail popup per item showing its content, checklist, tags (addable/removable right there), and other properties.
   - Links in the detail popup open a near-fullscreen preview — live, or an automatically extracted reader view (with recipe ingredients/instructions where available) for pages that block embedding.
   - A touch-optimization option for kiosk/tablet dashboards: larger checkbox tap targets and non-clickable row-preview links.
-  - Matches automaticly your Home Assistant theme.
+  - Matches automatically your Home Assistant theme.
 
 - **Configurable sync interval** — polls TickTick once a minute by default; adjustable under Settings → Devices & services → TickTick → **Configure**.
-
