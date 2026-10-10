@@ -2184,7 +2184,9 @@ class TickTickListCard extends HTMLElement {
         float: right;
         margin-left: 8px;
       }
-      .due.overdue { color: var(--error-color, #db4437); }
+      /* The theme's primary color (as picked in the HA profile/theme),
+         not a fixed warning red, so the highlight matches the dashboard. */
+      .due.overdue { color: var(--primary-color, var(--error-color, #db4437)); }
       /* Same gap as .filter-chip-row - this reuses .chip/.chip.active
          itself too (see _renderDetailTagsRow()), so both popups' chip
          rows end up pixel-identical, not just similarly sized. */
