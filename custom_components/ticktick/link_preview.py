@@ -13,6 +13,9 @@ the frontend which experience to show:
 - Framing blocked -> the article content is extracted (readability-lxml) and
   sanitized here, and shown as a "reader mode" static view instead - avoids
   the CSP wall entirely since nothing is actually being framed at that point.
+- YouTube video link -> always the reader view, built from the video's own
+  data (title, channel, description) rather than the page's markup - see
+  _extract_youtube_content.
 """
 
 from __future__ import annotations
@@ -20,9 +23,10 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import re
 import socket
 from html import escape, unescape
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import chardet
 from aiohttp import ClientTimeout, web
@@ -59,8 +63,43 @@ def _clean_text(value) -> str:
     through unescape() first means a well-formed plain-text field (the
     common case) is untouched (nothing to unescape) while a field like the
     one above still renders correctly.
+
+    A field holding markup instead of plain text is flattened to a single
+    line of its text (see _clean_paragraphs) rather than escaped as-is.
     """
-    return escape(unescape(str(value)))
+    return " ".join(_clean_paragraphs(value))
+
+
+# Boundaries between paragraphs when flattening an HTML-valued JSON-LD
+# field (see _clean_paragraphs) - every other tag (span, b, a, ...) is
+# inline and just contributes its text to the surrounding paragraph.
+_PARAGRAPH_TAGS = ["p", "div", "li", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6"]
+_PARAGRAPH_BREAK = "\x00"
+
+
+def _clean_paragraphs(value) -> list[str]:
+    """Like _clean_text, but split into the field's paragraphs.
+
+    schema.org text fields are meant to be plain text, but some sites
+    (e.g. rila.de) put their CMS's raw HTML in there instead - a
+    description wrapped in Word-pasted <p><span style=...>, or a whole
+    recipe's steps as a single HowToStep made of one <div> per step.
+    Escaped as-is, that markup would show up literally in the reader
+    view, so a field that actually contains tags has its text pulled out
+    here instead: one entry per block-level element, whitespace collapsed
+    the way a browser renders it, empty ones (<div><br></div> spacers)
+    dropped. A field without tags comes back as a single entry, exactly
+    what _clean_text always returned for it.
+    """
+    raw = str(value)
+    soup = BeautifulSoup(raw, "html.parser") if "<" in raw else None
+    if soup is None or soup.find() is None:
+        return [escape(unescape(raw))]
+    for tag in soup.find_all(_PARAGRAPH_TAGS):
+        tag.insert_before(_PARAGRAPH_BREAK)
+        tag.insert_after(_PARAGRAPH_BREAK)
+    paragraphs = (" ".join(p.split()) for p in soup.get_text().split(_PARAGRAPH_BREAK))
+    return [escape(p) for p in paragraphs if p]
 
 
 def _detect_encoding(resp: "web.Response", body: bytes) -> str:
@@ -237,7 +276,7 @@ def _flatten_jsonld(data):
             yield data
 
 
-def _parse_jsonld(html: str) -> tuple[dict | None, dict]:
+def _parse_jsonld(soup: BeautifulSoup) -> tuple[dict | None, dict]:
     """Looks for schema.org Recipe structured data (JSON-LD) - the same
     machine-readable ingredients/instructions most recipe sites already
     publish for Google's rich-snippet recipe cards, checked before falling
@@ -257,7 +296,6 @@ def _parse_jsonld(html: str) -> tuple[dict | None, dict]:
     Returns (recipe_or_None, id_index) - the index is returned even when
     no Recipe is found, though nothing currently uses it in that case.
     """
-    soup = BeautifulSoup(html, "html.parser")
     id_index: dict = {}
     recipe = None
     for script in soup.find_all("script", type="application/ld+json"):
@@ -301,13 +339,28 @@ def _recipe_image_url(image, base_url: str, id_index: dict) -> str | None:
     return None
 
 
-def _recipe_instructions_html(instructions, labels: dict) -> str:
+def _recipe_instructions_html(instructions, labels: dict, recipe_name: str) -> str:
     """Flattens schema.org recipeInstructions - a plain string, a list of
     HowToStep, or a list of HowToSection each with their own nested
     itemListElement of HowToStep - into one ordered list (with a
-    sub-heading per section, for recipes that group steps that way)."""
+    sub-heading per section, for recipes that group steps that way).
+
+    A step whose text is HTML with several paragraphs becomes one list
+    item per paragraph - rila.de, for one, puts a recipe's every step into
+    a single HowToStep as one <div> each (see _clean_paragraphs)."""
     parts = []
     list_open = False
+    recipe_name_key = _clean_text(recipe_name).casefold()
+
+    def section_heading(node):
+        # A section named after the recipe itself (rila.de wraps every
+        # recipe's steps in one such section) just repeats the popup's own
+        # title instead of naming a part of the recipe - treated as
+        # unnamed, so the generic heading below is used instead.
+        name = node.get("name")
+        if not name or _clean_text(name).casefold() == recipe_name_key:
+            return None
+        return _clean_text(name)
 
     def close_list():
         nonlocal list_open
@@ -318,18 +371,20 @@ def _recipe_instructions_html(instructions, labels: dict) -> str:
     def walk(node):
         nonlocal list_open
         if isinstance(node, str):
-            if not list_open:
-                parts.append("<ol>")
-                list_open = True
-            parts.append(f"<li>{_clean_text(node)}</li>")
+            for paragraph in _clean_paragraphs(node):
+                if not list_open:
+                    parts.append("<ol>")
+                    list_open = True
+                parts.append(f"<li>{paragraph}</li>")
         elif isinstance(node, list):
             for item in node:
                 walk(item)
         elif isinstance(node, dict):
             if node.get("@type") == "HowToSection":
                 close_list()
-                if node.get("name"):
-                    parts.append(f"<h3>{_clean_text(node['name'])}</h3>")
+                heading = section_heading(node)
+                if heading:
+                    parts.append(f"<h3>{heading}</h3>")
                 walk(node.get("itemListElement"))
             else:
                 text = node.get("text") or node.get("name")
@@ -346,7 +401,9 @@ def _recipe_instructions_html(instructions, labels: dict) -> str:
     # them either.
     top_level = instructions if isinstance(instructions, list) else [instructions]
     starts_with_named_section = bool(top_level) and (
-        isinstance(top_level[0], dict) and top_level[0].get("@type") == "HowToSection" and top_level[0].get("name")
+        isinstance(top_level[0], dict)
+        and top_level[0].get("@type") == "HowToSection"
+        and section_heading(top_level[0]) is not None
     )
 
     walk(instructions)
@@ -358,7 +415,33 @@ def _recipe_instructions_html(instructions, labels: dict) -> str:
     return f"<h3>{escape(labels['instructions'])}</h3>" + "".join(parts)
 
 
-def _render_recipe_html(recipe: dict, base_url: str, ui_lang: str, id_index: dict) -> str:
+# Markup of the "Shop Studio" recipes plugin for Shopware shops (e.g.
+# rila.de) - see _page_ingredient_quantities.
+_SHOP_STUDIO_INGREDIENT_CLASS = (
+    "shop-studio-recipes-recipe-detail-tabs-description-ingredients__content__ingredient-list__ingredient"
+)
+_SHOP_STUDIO_QUANTITY_CLASS = f"{_SHOP_STUDIO_INGREDIENT_CLASS}__quantity"
+
+
+def _page_ingredient_quantities(soup: BeautifulSoup) -> list[str]:
+    """The amount column of the page's own visible ingredient list, one
+    entry per ingredient row ("" for a row without one, e.g. "Salz,
+    Pfeffer"), or [] if the page has no such list.
+
+    Shopware's Shop Studio recipes plugin publishes recipeIngredient as
+    bare names ("Gnocchi") with the amounts ("500 g") only in its HTML -
+    a shopping list without amounts is of little use, so they're read
+    back from that markup here (see _render_recipe_html for how they're
+    matched up with the names).
+    """
+    quantities = []
+    for row in soup.find_all(class_=_SHOP_STUDIO_INGREDIENT_CLASS):
+        quantity = row.find(class_=_SHOP_STUDIO_QUANTITY_CLASS)
+        quantities.append(" ".join(quantity.get_text().split()) if quantity else "")
+    return quantities
+
+
+def _render_recipe_html(recipe: dict, base_url: str, ui_lang: str, id_index: dict, soup: BeautifulSoup) -> str:
     """Builds a clean reader view directly from schema.org Recipe JSON-LD -
     already plain text fields (not HTML), so escape() is the correct and
     sufficient sanitization here, unlike _sanitize_reader_html's heavier
@@ -382,15 +465,25 @@ def _render_recipe_html(recipe: dict, base_url: str, ui_lang: str, id_index: dic
 
     description = recipe.get("description")
     if isinstance(description, str) and description.strip():
-        parts.append(f"<p>{_clean_text(description)}</p>")
+        parts.extend(f"<p>{p}</p>" for p in _clean_paragraphs(description))
 
     ingredients = [i for i in recipe.get("recipeIngredient") or [] if isinstance(i, str) and i.strip()]
+    # Amounts from the page's own ingredient list (see
+    # _page_ingredient_quantities) - matched up by position, so only when
+    # both lists have the same length, and only when the structured data
+    # has no amounts of its own yet (none of its lines has a digit), so
+    # a site that does include them never ends up with them twice.
+    quantities = _page_ingredient_quantities(soup)
+    if len(quantities) == len(ingredients) and not any(c.isdigit() for i in ingredients for c in i):
+        ingredients = [f"{q} {i}" if q else i for q, i in zip(quantities, ingredients)]
     if ingredients:
         parts.append(f"<h3>{escape(labels['ingredients'])}</h3><ul>")
         parts.extend(f"<li>{_clean_text(i)}</li>" for i in ingredients)
         parts.append("</ul>")
 
-    instructions_html = _recipe_instructions_html(recipe.get("recipeInstructions"), labels)
+    instructions_html = _recipe_instructions_html(
+        recipe.get("recipeInstructions"), labels, str(recipe.get("name") or "")
+    )
     if instructions_html:
         parts.append(instructions_html)
 
@@ -555,7 +648,8 @@ def _extract_reader_content(html: str, base_url: str, ui_lang: str) -> tuple[str
     much less selective whole-body fallback above. ui_lang only matters
     for the Recipe path (see _render_recipe_html) - the other two just
     pass through whatever language the source page itself was in."""
-    recipe, id_index = _parse_jsonld(html)
+    soup = BeautifulSoup(html, "html.parser")
+    recipe, id_index = _parse_jsonld(soup)
     if recipe:
         # Plain text, not HTML - the frontend does its own escapeHtml() on
         # this (see the JS `preview.title` usage), so only unescape() any
@@ -564,7 +658,7 @@ def _extract_reader_content(html: str, base_url: str, ui_lang: str) -> tuple[str
         # instead of "Möhren" - the exact bug _clean_text exists to avoid
         # everywhere else this data flows).
         title = unescape(str(recipe.get("name") or "Recipe"))
-        return title, _render_recipe_html(recipe, base_url, ui_lang, id_index)
+        return title, _render_recipe_html(recipe, base_url, ui_lang, id_index, soup)
 
     doc = Document(html)
     title = doc.short_title()
@@ -572,6 +666,136 @@ def _extract_reader_content(html: str, base_url: str, ui_lang: str) -> tuple[str
     if _text_length(summary) < _MIN_READABILITY_TEXT_CHARS:
         summary = _generic_body_extract(html)
     return title, _sanitize_reader_html(summary, base_url)
+
+
+# YouTube pages can't be framed (X-Frame-Options) and are rendered almost
+# entirely by JavaScript, so the generic extraction above finds nothing but
+# empty layout <div>s on them. Video links get their own path instead (see
+# _youtube_video_id / _extract_youtube_content), every other YouTube page
+# (channel, playlist, search, ...) just the "open in new tab" fallback.
+_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+    "youtu.be",
+}
+_YOUTUBE_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+# The path segment a video id follows in the non-?v= URL forms
+# (youtube.com/shorts/<id>, /live/<id>, /embed/<id>, /v/<id>).
+_YOUTUBE_ID_PATH_PREFIXES = ("shorts", "live", "embed", "v")
+# Pre-answers YouTube's EU cookie-consent interstitial ("reject all"), which
+# would otherwise come back as a redirect to consent.youtube.com - and
+# redirects aren't followed here (see the fetch in get()). Nothing else is
+# sent, so the request stays as anonymous as any other preview fetch.
+_YOUTUBE_CONSENT_COOKIE = "SOCS=CAI"
+_YOUTUBE_PLAYER_RESPONSE = re.compile(r"\bytInitialPlayerResponse\s*=\s*")
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"]+")
+
+
+def _youtube_video_id(parsed) -> str | None:
+    """The 11-character video id of a YouTube video link, in any of its URL
+    forms (watch?v=, youtu.be/, shorts/, live/, embed/), else None."""
+    path_parts = [p for p in parsed.path.split("/") if p]
+    if parsed.hostname == "youtu.be":
+        candidate = path_parts[0] if path_parts else ""
+    elif path_parts[:1] == ["watch"]:
+        candidate = parse_qs(parsed.query).get("v", [""])[0]
+    elif len(path_parts) >= 2 and path_parts[0] in _YOUTUBE_ID_PATH_PREFIXES:
+        candidate = path_parts[1]
+    else:
+        candidate = ""
+    return candidate if _YOUTUBE_VIDEO_ID.fullmatch(candidate) else None
+
+
+def _linkify_text(text: str) -> str:
+    """Escapes plain text for HTML, turning bare http(s) URLs in it into
+    links (opening in a new tab, like every link in the reader view - see
+    _sanitize_reader_html). Trailing punctuation is left out of the link,
+    since a URL at the end of a sentence is far more common than one
+    genuinely ending in "." or ")"."""
+    parts = []
+    last = 0
+    for match in _URL_IN_TEXT.finditer(text):
+        url = match.group(0).rstrip(".,;:!?)")
+        parts.append(escape(text[last : match.start()]))
+        parts.append(f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{escape(url)}</a>')
+        last = match.start() + len(url)
+    parts.append(escape(text[last:]))
+    return "".join(parts)
+
+
+def _format_duration(seconds: int) -> str:
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+
+def _youtube_player_response(html: str) -> dict | None:
+    """The `ytInitialPlayerResponse` JSON object a watch page embeds in an
+    inline <script> - the same data YouTube's own player starts from. Its
+    first assignment can be a placeholder (`= null`) on some page
+    variants, hence trying each until one actually is an object."""
+    decoder = json.JSONDecoder()
+    for match in _YOUTUBE_PLAYER_RESPONSE.finditer(html):
+        try:
+            data, _ = decoder.raw_decode(html, match.end())
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _extract_youtube_content(html: str, video_id: str) -> tuple[str, str] | None:
+    """Reader view for a YouTube video: thumbnail (linking to the video),
+    channel and duration, then the full description - the part of a video
+    page worth reading in place, since the video itself can't be shown
+    here. Description paragraphs (blank-line separated) become <p>s, its
+    single line breaks <br>s, its URLs links. Returns None when the page
+    has no video data at all (removed/private video, or YouTube served
+    something other than the normal watch page)."""
+    data = _youtube_player_response(html)
+    details = (data or {}).get("videoDetails")
+    if not isinstance(details, dict):
+        return None
+
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    thumbnails = (details.get("thumbnail") or {}).get("thumbnails") or []
+    thumbnail_url = next(
+        (
+            t["url"]
+            for t in sorted(thumbnails, key=lambda t: t.get("width") or 0, reverse=True)
+            if str(t.get("url", "")).startswith("https://")
+        ),
+        f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+    )
+    parts = [
+        f'<a href="{escape(video_url)}" target="_blank" rel="noopener noreferrer">'
+        f'<img src="{escape(thumbnail_url)}" alt=""></a>'
+    ]
+
+    meta = []
+    if details.get("author"):
+        meta.append(f"<strong>{escape(str(details['author']))}</strong>")
+    try:
+        length = int(details.get("lengthSeconds") or 0)
+    except ValueError:
+        length = 0
+    if length:  # 0 for a live stream
+        meta.append(_format_duration(length))
+    if meta:
+        parts.append(f"<p>{' · '.join(meta)}</p>")
+
+    description = str(details.get("shortDescription") or "").strip()
+    for paragraph in re.split(r"\n\s*\n", description):
+        lines = [line.strip() for line in paragraph.strip().split("\n")]
+        if any(lines):
+            parts.append(f"<p>{'<br>'.join(_linkify_text(line) for line in lines)}</p>")
+
+    return str(details.get("title") or "YouTube"), "".join(parts)
 
 
 class TickTickLinkPreviewView(HomeAssistantView):
@@ -602,18 +826,31 @@ class TickTickLinkPreviewView(HomeAssistantView):
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return web.json_response({"mode": "error", "message": "Invalid URL"}, status=400)
 
-        if await self._hass.async_add_executor_job(_is_private_or_local, parsed.hostname):
+        headers = {
+            "User-Agent": _USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml",
+        }
+        video_id = None
+        fetch_url = target
+        if parsed.hostname in _YOUTUBE_HOSTS:
+            video_id = _youtube_video_id(parsed)
+            if not video_id:
+                return web.json_response({"mode": "error", "message": "Not a YouTube video"})
+            # Always the canonical watch page, whichever form the link was
+            # in - youtu.be/ and m.youtube.com links only redirect there
+            # anyway, and redirects aren't followed (see below).
+            fetch_url = f"https://www.youtube.com/watch?v={video_id}"
+            headers["Cookie"] = _YOUTUBE_CONSENT_COOKIE
+
+        if await self._hass.async_add_executor_job(_is_private_or_local, urlparse(fetch_url).hostname):
             return web.json_response({"mode": "error", "message": "URL not allowed"}, status=400)
 
         session = aiohttp_client.async_get_clientsession(self._hass)
         try:
             async with session.get(
-                target,
+                fetch_url,
                 timeout=_FETCH_TIMEOUT,
-                headers={
-                    "User-Agent": _USER_AGENT,
-                    "Accept": "text/html,application/xhtml+xml",
-                },
+                headers=headers,
                 # Redirects aren't followed automatically - each hop would
                 # need the same private/local-address check the initial URL
                 # just got, which round-tripping through allow_redirects
@@ -634,7 +871,7 @@ class TickTickLinkPreviewView(HomeAssistantView):
                 blocks_framing = bool(resp.headers.get("X-Frame-Options")) or _frame_ancestors_blocks_us(
                     resp.headers.get("Content-Security-Policy", "")
                 )
-                if not blocks_framing:
+                if not blocks_framing and not video_id:
                     # Nothing to extract - the card can just frame the live
                     # page directly, so the body is never even read here.
                     return web.json_response({"mode": "iframe"})
@@ -666,11 +903,17 @@ class TickTickLinkPreviewView(HomeAssistantView):
             return web.json_response({"mode": "error", "message": "Could not load preview"})
 
         try:
-            title, reader_html = await self._hass.async_add_executor_job(
-                _extract_reader_content, html, target, ui_lang
-            )
+            if video_id:
+                extracted = await self._hass.async_add_executor_job(_extract_youtube_content, html, video_id)
+            else:
+                extracted = await self._hass.async_add_executor_job(
+                    _extract_reader_content, html, target, ui_lang
+                )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Link preview extraction failed for %s: %s", target, err)
             return web.json_response({"mode": "error", "message": "Could not extract content"})
+        if extracted is None:
+            return web.json_response({"mode": "error", "message": "Could not extract content"})
 
+        title, reader_html = extracted
         return web.json_response({"mode": "reader", "title": title, "html": reader_html})

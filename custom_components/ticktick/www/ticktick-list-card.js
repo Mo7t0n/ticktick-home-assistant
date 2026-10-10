@@ -2194,6 +2194,9 @@ class TickTickListCard extends HTMLElement {
         max-width: 720px;
         margin: 0 auto;
         line-height: 1.6;
+        /* Long bare URLs (e.g. a YouTube description's link list) would
+           otherwise push the whole view wider than the popup. */
+        overflow-wrap: anywhere;
       }
       .link-reader-content :is(h1, h2, h3, h4, h5, h6) { margin: 1.2em 0 0.5em; line-height: 1.3; }
       .link-reader-content p { margin: 0 0 1em; }
