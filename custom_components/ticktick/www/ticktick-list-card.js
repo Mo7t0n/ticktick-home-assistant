@@ -480,6 +480,63 @@ function tagColor(tag) {
   return TAG_COLOR_PALETTE[hash % TAG_COLOR_PALETTE.length];
 }
 
+// Text on a colored background (active filter/tag chips, tag group
+// headings): black or white, whichever reads better on that exact color -
+// see _applyContrastText for where the colors come from. Decided by APCA
+// (the perceptual contrast model behind the WCAG 3 drafts) rather than
+// the WCAG 2 contrast ratio, which is known to favor black text on
+// saturated mid-tones like this palette's red and blue, where white is
+// clearly the more legible choice.
+const CONTRAST_TEXT_DARK = "#000";
+const CONTRAST_TEXT_LIGHT = "#fff";
+const contrastTextCache = new Map();
+let colorProbe = null;
+
+// Any CSS color the browser understands (rgb(), hex, hsl(), oklch(), ...)
+// as [r, g, b] bytes, via a 1px canvas - null if it's fully transparent or
+// not a color at all. Partial transparency is ignored (theme text colors
+// used as chip colors are at most slightly translucent).
+function cssColorToRgb(color) {
+  colorProbe ??= document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+  colorProbe.clearRect(0, 0, 1, 1);
+  colorProbe.fillStyle = "rgba(0, 0, 0, 0)"; // an unparsable value below keeps this
+  colorProbe.fillStyle = color;
+  colorProbe.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = colorProbe.getImageData(0, 0, 1, 1).data;
+  return a ? [r, g, b] : null;
+}
+
+// APCA-W3 0.1.9 screen luminance and lightness contrast (Lc).
+function apcaLuminance([r, g, b]) {
+  const y = 0.2126729 * (r / 255) ** 2.4 + 0.7151522 * (g / 255) ** 2.4 + 0.072175 * (b / 255) ** 2.4;
+  return y < 0.022 ? y + (0.022 - y) ** 1.414 : y;
+}
+
+function apcaContrast(textY, bgY) {
+  if (Math.abs(bgY - textY) < 0.0005) return 0;
+  if (bgY > textY) {
+    const sapc = (bgY ** 0.56 - textY ** 0.57) * 1.14;
+    return sapc < 0.1 ? 0 : (sapc - 0.027) * 100;
+  }
+  const sapc = (bgY ** 0.65 - textY ** 0.62) * 1.14;
+  return sapc > -0.1 ? 0 : (sapc + 0.027) * 100;
+}
+
+function contrastTextColor(background) {
+  if (!contrastTextCache.has(background)) {
+    const rgb = cssColorToRgb(background);
+    let text = null;
+    if (rgb) {
+      const bgY = apcaLuminance(rgb);
+      const onDark = Math.abs(apcaContrast(apcaLuminance([0, 0, 0]), bgY));
+      const onLight = Math.abs(apcaContrast(apcaLuminance([255, 255, 255]), bgY));
+      text = onLight >= onDark ? CONTRAST_TEXT_LIGHT : CONTRAST_TEXT_DARK;
+    }
+    contrastTextCache.set(background, text);
+  }
+  return contrastTextCache.get(background);
+}
+
 function renderTagSquares(tags) {
   if (!tags || !tags.length) return "";
   return `<div class="tag-squares">${tags
@@ -1541,6 +1598,21 @@ class TickTickListCard extends HTMLElement {
     this._detailSlot.classList.toggle("touch-optimized", this._touchOptimized);
     this._setupTagDrag();
     this._syncMenuPopup();
+    this._applyContrastText();
+  }
+
+  // Sets each colored chip's/tag heading's text to black or white for the
+  // best contrast with its background (see contrastTextColor). Read back
+  // from the rendered elements rather than computed from the template's
+  // values, since several of those backgrounds are theme variables - the
+  // priority colors, --primary-color for the due-date chips - whose
+  // actual color is only known once the theme has applied. The CSS text
+  // colors stay as the fallback for anything this can't resolve.
+  _applyContrastText() {
+    for (const el of this.shadowRoot.querySelectorAll(".chip.active, .group-header-tag")) {
+      const text = contrastTextColor(getComputedStyle(el).backgroundColor);
+      if (text) el.style.color = text;
+    }
   }
 
   // The sort/filter popup is shown in the browser's top layer (Popover
@@ -1872,7 +1944,9 @@ class TickTickListCard extends HTMLElement {
          --ticktick-priority-*-color used for the checkboxes; tag: that
          tag's own palette swatch) so an active chip reads as "this
          priority/tag" at a glance. Chips without a --chip-color (the
-         Fälligkeit/due-bucket group) fall back to the plain accent color. */
+         Fälligkeit/due-bucket group) fall back to the plain accent color.
+         The text color here is only a fallback - _applyContrastText sets
+         black or white per chip, whichever contrasts best with it. */
       .chip.active { background: var(--chip-color, var(--primary-color)); color: var(--text-primary-color, #fff); border-color: var(--chip-color, var(--primary-color)); }
       .list-body {
         padding: 4px 0 8px 0;
