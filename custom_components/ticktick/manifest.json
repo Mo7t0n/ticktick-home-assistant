@@ -13,11 +13,11 @@
     "application_credentials",
     "http"
   ],
-  "documentation": "https://github.com/Hantick/ticktick-home-assistant",
+  "documentation": "https://github.com/Mo7t0n/ticktick-home-assistant",
   "homekit": {},
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/Hantick/ticktick-home-assistant/issues",
+  "issue_tracker": "https://github.com/Mo7t0n/ticktick-home-assistant/issues",
   "requirements": [
     "readability-lxml==0.9",
     "chardet==5.2.0"

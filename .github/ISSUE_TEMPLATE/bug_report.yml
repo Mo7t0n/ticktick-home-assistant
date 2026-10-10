@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in the integration or the dashboard card doesn't work as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      description: Shown in HACS, or under Settings → Devices & services → TickTick.
+      placeholder: v1.1.0
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: "2026.10.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected part
+      options:
+        - Integration (to-do lists, sensors, services)
+        - Dashboard card (ticktick-list-card)
+        - Link preview
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: card-config
+    attributes:
+      label: Card configuration
+      description: Only for card issues — the card's YAML (from the card editor's code view).
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from Settings → System → Logs, and/or the browser console for card issues.
+      render: text
