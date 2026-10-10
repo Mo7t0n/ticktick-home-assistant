@@ -1195,14 +1195,12 @@ class TickTickListCard extends HTMLElement {
     </div>`;
   }
 
-  _renderRow(item, projectKind, excludeTag) {
+  _renderRow(item, projectKind, excludeTags) {
     const status = this._effectiveStatus(item);
     const completed = status === "completed";
     const priority = (item.priority || "NONE").toLowerCase();
     const visibleTags = item.tags && item.tags.length
-      ? excludeTag
-        ? item.tags.filter((t) => t !== excludeTag)
-        : item.tags
+      ? item.tags.filter((t) => !excludeTags.has(t))
       : [];
     const hasContentLine = Boolean(item.content) || visibleTags.length > 0;
     // Touch-Optimierung (see setConfig): row/list previews get plain,
@@ -1551,6 +1549,14 @@ class TickTickListCard extends HTMLElement {
     const handle = showDragHandle
       ? `<span class="group-drag-handle" title="${escapeHtml(this._t("dragToReorderTag"))}"><ha-icon icon="mdi:drag-vertical"></ha-icon></span>`
       : "";
+    // Tag squares that would say nothing new on these rows: the group's own
+    // tag when grouping by tag (the heading already names it), and the
+    // filter's tag when filtering by exactly one (every visible row carries
+    // it). With several filter tags a row's square still tells which of
+    // them it matched, so those stay.
+    const excludeTags = new Set();
+    if (this._sortBy === "tag") excludeTags.add(group.key);
+    if (this._filters.tags.size === 1) this._filters.tags.forEach((t) => excludeTags.add(t));
     return `
         <div class="group" data-group-key="${escapeHtml(group.key)}">
           ${
@@ -1563,9 +1569,7 @@ class TickTickListCard extends HTMLElement {
               : ""
           }
           ${group.items
-            .map((item) =>
-              this._renderRow(item, projectKind, this._sortBy === "tag" ? group.key : null)
-            )
+            .map((item) => this._renderRow(item, projectKind, excludeTags))
             .join("")}
         </div>`;
   }
