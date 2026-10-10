@@ -596,6 +596,7 @@ class TickTickListCard extends HTMLElement {
       this._sortable.destroy();
       this._sortable = null;
     }
+    this._stopMenuTracking();
   }
 
   setConfig(config) {
@@ -1096,7 +1097,7 @@ class TickTickListCard extends HTMLElement {
     if (!this._menuOpen) return "";
 
     if (!this._menuField) {
-      return `<div class="menu-popup">
+      return `<div class="menu-popup" popover="manual">
         ${MENU_FIELDS.map(
           ({ field, labelKey, icon }) => `
           <div class="menu-row" data-menu-row="${field}">
@@ -1126,7 +1127,7 @@ class TickTickListCard extends HTMLElement {
           ]
         : SORT_KEYS.map((k) => [k, this._t(SORT_LABEL_KEYS[k]), SORT_KEY_ICONS[k]]);
 
-    return `<div class="menu-popup">
+    return `<div class="menu-popup" popover="manual">
       <div class="menu-back" data-menu-back="true">
         <ha-icon icon="mdi:chevron-left"></ha-icon>
         <span>${fieldLabel}</span>
@@ -1149,7 +1150,7 @@ class TickTickListCard extends HTMLElement {
       (item.tags || []).forEach((t) => tagSet.add(t));
     }
 
-    return `<div class="menu-popup menu-popup-wide">
+    return `<div class="menu-popup menu-popup-wide" popover="manual">
       <div class="menu-back" data-menu-back="true">
         <ha-icon icon="mdi:chevron-left"></ha-icon>
         <span>${this._t("menuFilter")}</span>
@@ -1539,6 +1540,74 @@ class TickTickListCard extends HTMLElement {
     this._cardEl.classList.toggle("touch-optimized", this._touchOptimized);
     this._detailSlot.classList.toggle("touch-optimized", this._touchOptimized);
     this._setupTagDrag();
+    this._syncMenuPopup();
+  }
+
+  // The sort/filter popup is shown in the browser's top layer (Popover
+  // API) instead of relying on its z-index: a theme that makes ha-card its
+  // own stacking context (the Frosted Glass theme's card-mod styling sets
+  // `isolation: isolate` on every ha-card) otherwise traps the popup
+  // underneath every card that comes later on the dashboard, whatever its
+  // z-index. In the top layer it's no longer positioned relative to the
+  // card, so it's placed below the header from here and kept there every
+  // frame while open - the page, or any scroll container around the card,
+  // can move the card underneath it. Called after every render, since
+  // each one replaces the popup element. Browsers without the Popover API
+  // keep the plain absolutely positioned popup.
+  _syncMenuPopup() {
+    if (!this._menuOpen) {
+      this._stopMenuTracking();
+      return;
+    }
+    // Clicks inside the card are handled by _onClick(); this closes the
+    // popup on a click anywhere else on the page too, like any dropdown -
+    // otherwise it would stay on top of whatever opens next (e.g. another
+    // card's more-info dialog).
+    if (!this._menuOutsidePointer) {
+      this._menuOutsidePointer = (ev) => {
+        if (ev.composedPath().includes(this)) return;
+        this._menuOpen = false;
+        this._menuField = null;
+        this._render();
+      };
+      window.addEventListener("pointerdown", this._menuOutsidePointer, true);
+    }
+    const popup = this._cardEl.querySelector(".menu-popup");
+    if (!popup || typeof popup.showPopover !== "function") return;
+    popup.showPopover();
+    this._positionMenuPopup(popup);
+    if (!this._menuFrame) this._menuFrame = requestAnimationFrame(() => this._trackMenuPopup());
+  }
+
+  _trackMenuPopup() {
+    this._menuFrame = null;
+    const popup = this.isConnected && this._cardEl?.querySelector(".menu-popup:popover-open");
+    if (!popup) return;
+    this._positionMenuPopup(popup);
+    this._menuFrame = requestAnimationFrame(() => this._trackMenuPopup());
+  }
+
+  // Same spot the in-card popup used: 6px below the header, right edge
+  // inset 16px from the card's right edge (the header's own padding).
+  _positionMenuPopup(popup) {
+    const header = this._cardEl.querySelector(".header");
+    if (!header) return;
+    const rect = header.getBoundingClientRect();
+    const top = `${Math.round(rect.bottom + 6)}px`;
+    const right = `${Math.round(document.documentElement.clientWidth - rect.right + 16)}px`;
+    if (popup.style.top !== top) popup.style.top = top;
+    if (popup.style.right !== right) popup.style.right = right;
+  }
+
+  _stopMenuTracking() {
+    if (this._menuFrame) {
+      cancelAnimationFrame(this._menuFrame);
+      this._menuFrame = null;
+    }
+    if (this._menuOutsidePointer) {
+      window.removeEventListener("pointerdown", this._menuOutsidePointer, true);
+      this._menuOutsidePointer = null;
+    }
   }
 
   // Builds the markup for one group section (tag/due-date/etc. heading plus
@@ -1728,6 +1797,16 @@ class TickTickListCard extends HTMLElement {
         overflow: hidden;
         z-index: 50;
         font-size: 0.88em;
+      }
+      /* Top-layer variant (see _syncMenuPopup): replaces the browser's own
+         popover defaults (centered via inset:0 + margin:auto, padding) with
+         a plain fixed box - top/right are set inline from the header's
+         position. */
+      .menu-popup:popover-open {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        padding: 0;
       }
       .menu-popup-wide { min-width: 270px; max-width: 310px; }
       .menu-row, .menu-option, .menu-back {
